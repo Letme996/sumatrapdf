@@ -219,7 +219,7 @@ func runTestUtilMust(dir string) {
 
 var (
 	pdbFiles = []string{"libmupdf.pdb", "Installer.pdb",
-		"SumatraPDF-no-MuPDF.pdb", "SumatraPDF.pdb"}
+		"SumatraPDF-mupdf-dll.pdb", "SumatraPDF.pdb"}
 )
 
 func addZipFileMust(w *zip.Writer, path string) {
@@ -328,24 +328,22 @@ func buildPreRelease() {
 
 	verifyTranslationsMust()
 
-	downloadPigzMust()
-
 	setBuildConfig(gitSha1, svnPreReleaseVer)
 	slnPath := filepath.Join(vsVer, "SumatraPDF.sln")
-	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-no-MUPDF;PdfFilter;PdfPreview;Uninstaller;test_util", "/p:Configuration=Release;Platform=Win32", "/m")
+	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-mupdf-dll;PdfFilter;PdfPreview;Uninstaller;test_util", "/p:Configuration=Release;Platform=Win32", "/m")
 	fatalIfErr(err)
 	runTestUtilMust("rel")
 	signMust(pj("rel", "SumatraPDF.exe"))
 	signMust(pj("rel", "libmupdf.dll"))
 	signMust(pj("rel", "PdfFilter.dll"))
 	signMust(pj("rel", "PdfPreview.dll"))
-	signMust(pj("rel", "SumatraPDF-no-MUPDF.exe"))
+	signMust(pj("rel", "SumatraPDF-mupdf-dll.exe"))
 	signMust(pj("rel", "Uninstaller.exe"))
 	err = runMsbuild(true, slnPath, "/t:Installer", "/p:Configuration=Release;Platform=Win32", "/m")
 	fatalIfErr(err)
 	signMust(pj("rel", "Installer.exe"))
 
-	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-no-MUPDF;PdfFilter;PdfPreview;Uninstaller;test_util", "/p:Configuration=Release;Platform=x64", "/m")
+	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-mupdf-dll;PdfFilter;PdfPreview;Uninstaller;test_util", "/p:Configuration=Release;Platform=x64", "/m")
 	fatalIfErr(err)
 
 	if isOS64Bit() {
@@ -355,7 +353,7 @@ func buildPreRelease() {
 	signMust(pj("rel64", "libmupdf.dll"))
 	signMust(pj("rel", "PdfFilter.dll"))
 	signMust(pj("rel", "PdfPreview.dll"))
-	signMust(pj("rel64", "SumatraPDF-no-MUPDF.exe"))
+	signMust(pj("rel64", "SumatraPDF-mupdf-dll.exe"))
 	signMust(pj("rel64", "Uninstaller.exe"))
 	err = runMsbuild(true, slnPath, "/t:Installer", "/p:Configuration=Release;Platform=x64", "/m")
 	fatalIfErr(err)
@@ -369,14 +367,6 @@ func buildPreRelease() {
 
 	createManifestMust()
 	s3UploadPreReleaseMust(svnPreReleaseVer)
-}
-
-// TOOD: alternatively, just puts pigz.exe in the repo
-func downloadPigzMust() {
-	uri := "https://kjkpub.s3.amazonaws.com/software/pigz/2.3.1-149/pigz.exe"
-	path := pj("bin", "pigz.exe")
-	sha1 := "10a2d3e3cafbad083972d6498fee4dc7df603c04"
-	httpDlToFileMust(uri, path, sha1)
 }
 
 func buildMakeLzsa() {
@@ -403,29 +393,27 @@ func buildRelease() {
 
 	verifyTranslationsMust()
 
-	downloadPigzMust()
-
 	setBuildConfig(gitSha1, "")
 	slnPath := filepath.Join(vsVer, "SumatraPDF.sln")
 
-	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-no-MUPDF;Uninstaller;test_util", "/p:Configuration=Release;Platform=Win32", "/m")
+	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-mupdf-dll;Uninstaller;test_util", "/p:Configuration=Release;Platform=Win32", "/m")
 	fatalIfErr(err)
 	runTestUtilMust("rel")
 	signMust(pj("rel", "SumatraPDF.exe"))
-	signMust(pj("rel", "SumatraPDF-no-MUPDF.exe"))
+	signMust(pj("rel", "SumatraPDF-mupdf-dll.exe"))
 	signMust(pj("rel", "Uninstaller.exe"))
 	err = runMsbuild(true, slnPath, "/t:Installer", "/p:Configuration=Release;Platform=Win32", "/m")
 	fatalIfErr(err)
 	signMust(pj("rel", "Installer.exe"))
 
-	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-no-MUPDF;Uninstaller;test_util", "/p:Configuration=Release;Platform=x64", "/m")
+	err = runMsbuild(true, slnPath, "/t:SumatraPDF;SumatraPDF-mupdf-dll;Uninstaller;test_util", "/p:Configuration=Release;Platform=x64", "/m")
 	fatalIfErr(err)
 
 	if isOS64Bit() {
 		runTestUtilMust("rel64")
 	}
 	signMust(pj("rel64", "SumatraPDF.exe"))
-	signMust(pj("rel64", "SumatraPDF-no-MUPDF.exe"))
+	signMust(pj("rel64", "SumatraPDF-mupdf-dll.exe"))
 	signMust(pj("rel64", "Uninstaller.exe"))
 	err = runMsbuild(true, slnPath, "/t:Installer", "/p:Configuration=Release;Platform=x64", "/m")
 	fatalIfErr(err)
@@ -483,7 +471,7 @@ func createManifestMust() {
 	var lines []string
 	files := []string{
 		"SumatraPDF.exe",
-		"SumatraPDF-no-MUPDF.exe",
+		"SumatraPDF-mupdf-dll.exe",
 		"Installer.exe",
 		"libmupdf.dll",
 		"PdfFilter.dll",

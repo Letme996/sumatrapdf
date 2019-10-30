@@ -18,6 +18,7 @@ Reference for warnings:
  4204 - non-standard extension: non-constant aggregate initializer
  4206 - non-standard extension: translation unit is empty
  4244 - 64bit, conversion with possible loss of data
+ 4245 - sign/unsigned mismatch
  4267 - 64bit, conversion with possible loss of data
  4302 - 64bit, type cast truncation
  4310 - 64bit, cast truncates constant value
@@ -46,13 +47,17 @@ include("premake5.files.lua")
 
 workspace "SumatraPDF"
   configurations { "Debug", "Release", "ReleasePrefast" }
-  platforms { "x32", "x64" }
-  startproject "SumatraPDF-no-MUPDF"
+  platforms { "x32", "x32_xp", "x64" }
+  startproject "SumatraPDF-mupdf-dll"
+
+  filter "platforms:x32_xp"
+    architecture "x86"
+    toolset "v141_xp"
+    buildoptions { "/arch:IA32" } -- disable the default /arch:SSE2 for 32-bit builds
+  filter {}
 
   filter "platforms:x32"
      architecture "x86"
-     toolset "v141_xp"
-     buildoptions { "/arch:IA32" } -- disable the default /arch:SSE2 for 32-bit builds
   filter {}
 
   filter "platforms:x64"
@@ -70,23 +75,34 @@ workspace "SumatraPDF"
     location "vs2017"
   filter {}
 
+  filter "action:vs2019"
+    location "vs2019"
+  filter {}
+
   filter "action:gmake"
     location "gmake"
   filter {}
 
   filter {"platforms:x32", "configurations:Release"}
-    targetdir "rel"
+    targetdir "out/rel32"
   filter {"platforms:x32", "configurations:ReleasePrefast"}
-    targetdir "relPrefast"
+    targetdir "out/rel32_prefast"
   filter {"platforms:x32", "configurations:Debug"}
-    targetdir "dbg"
+    targetdir "out/dbg32"
+
+  filter {"platforms:x32_xp", "configurations:Release"}
+    targetdir "out/rel32_xp"
+  filter {"platforms:x32_xp", "configurations:ReleasePrefast"}
+    targetdir "out/rel32_prefast_xp"
+  filter {"platforms:x32_xp", "configurations:Debug"}
+    targetdir "out/dbg32_xp"
 
   filter {"platforms:x64", "configurations:Release"}
-    targetdir "rel64"
+    targetdir "out/rel64"
   filter {"platforms:x64", "configurations:ReleasePrefast"}
-    targetdir "relPrefast64"
+    targetdir "out/rel64_prefast"
   filter {"platforms:x64", "configurations:Debug"}
-    targetdir "dbg64"
+    targetdir "out/dbg64"
   filter {}
   objdir "%{cfg.targetdir}/obj"
 
@@ -97,10 +113,10 @@ workspace "SumatraPDF"
     symbols "Full"
   filter {}
 
+  staticruntime  "On"
   -- https://github.com/premake/premake-core/wiki/flags
   flags {
     "MultiProcessorCompile",
-    "StaticRuntime",
     -- "Unicode", TODO: breaks libdjuv?
   }
 
@@ -124,7 +140,6 @@ workspace "SumatraPDF"
     optimize "On"
 
     filter "configurations:ReleasePrefast"
-      toolset "v141" -- xp toolset doesn't have prefast
       -- TODO: somehow /analyze- is default which creates warning about
       -- over-ride from cl.exe. Don't know how to disable the warning
       buildoptions { "/analyze" }
@@ -135,9 +150,8 @@ workspace "SumatraPDF"
   project "zlib"
     kind "StaticLib"
     language "C"
-    disablewarnings { "4131", "4244", "4996" }
+    disablewarnings { "4131", "4244", "4245", "4267", "4996" }
     zlib_files()
-
 
   project "libdjvu"
     kind "StaticLib"
@@ -168,7 +182,7 @@ workspace "SumatraPDF"
     kind "StaticLib"
     language "C"
     defines { "HAVE_STRING_H=1", "JBIG_NO_MEMENTO" }
-    disablewarnings { "4018", "4100", "4244", "4267", "4701" }
+    disablewarnings { "4018", "4100", "4146", "4244", "4267", "4456", "4701" }
     includedirs { "ext/jbig2dec" }
     jbig2dec_files()
 
@@ -190,7 +204,7 @@ workspace "SumatraPDF"
   project "libwebp"
     kind "StaticLib"
     language "C"
-    disablewarnings { "4204", "4244", "4057" }
+    disablewarnings { "4204", "4244", "4057", "4245", "4310" }
     includedirs { "ext/libwebp" }
     libwebp_files()
 
@@ -205,7 +219,7 @@ workspace "SumatraPDF"
     -- -I .\ext\libjpeg-turbo\win\ -f win32
     -- -o .\obj-rel\jpegturbo\jsimdcpu.obj
     -- .\ext\libjpeg-turbo\simd\jsimdcpu.asm
-    filter {'files:**.asm', 'platforms:x32'}
+    filter {'files:**.asm', 'platforms:x32 or x32_xp'}
        buildmessage '%{file.relpath}'
        buildoutputs { '%{cfg.objdir}/%{file.basename}.obj' }
        buildcommands {
@@ -274,14 +288,14 @@ workspace "SumatraPDF"
     }
     -- .\ext\..\bin\nasm.exe -I .\mupdf\ -f win32 -o .\obj-rel\mupdf\font_base14.obj
     -- .\mupdf\font_base14.asm
-    filter {'files:**.asm', 'platforms:x32'}
+    filter {'files:**.asm', 'platforms:x32 or x32_xp'}
        buildmessage 'Compiling %{file.relpath}'
        buildoutputs { '%{cfg.objdir}/%{file.basename}.obj' }
        buildcommands {
           '..\\bin\\nasm.exe -f win32 -I ../mupdf/ -o "%{cfg.objdir}/%{file.basename}.obj" "%{file.relpath}"'
        }
     filter {}
-
+    
     filter {'files:**.asm', 'platforms:x64'}
       buildmessage 'Compiling %{file.relpath}'
       buildoutputs { '%{cfg.objdir}/%{file.basename}.obj' }
@@ -329,7 +343,7 @@ workspace "SumatraPDF"
     -- QITABENT in shlwapi.h has incorrect definition and causes 4838
     disablewarnings { "4838" }
     includedirs { "src", "ext/zlib", "ext/lzma/C" }
-    includedirs { "ext/libwebp", "ext/unarr", "mupdf/include" }
+    includedirs { "ext/libwebp/src", "ext/unarr", "mupdf/include" }
     utils_files()
 
 
@@ -542,7 +556,7 @@ workspace "SumatraPDF"
     linkoptions { "/DELAYLOAD:gdiplus.dll /DELAYLOAD:msimg32.dll /DELAYLOAD:shlwapi.dll /DELAYLOAD:urlmon.dll /DELAYLOAD:version.dll /DELAYLOAD:wininet.dll"}
 
 
-  project "SumatraPDF-no-MUPDF"
+  project "SumatraPDF-mupdf-dll"
     kind "WindowedApp"
     language "C++"
     cppdialect "C++17"
@@ -587,7 +601,7 @@ workspace "SumatraPDF"
     flags { "NoManifest" }
     defines { "NO_LIBWEBP", "NO_LIBMUPDF", "HAVE_ZLIB", "HAVE_BZIP2", "HAVE_7Z" }
     disablewarnings {
-      "4018", "4100", "4131", "4244", "4267", "4302", "4311", "4312", "4456",
+      "4018", "4100", "4131", "4244", "4245", "4267", "4302", "4311", "4312", "4456",
       "4457", "4838", "4702", "4706", "4996"
     }
     installer_files()
@@ -608,7 +622,7 @@ workspace "SumatraPDF"
     defines { "NO_LIBWEBP", "NO_LIBMUPDF", "HAVE_ZLIB", "HAVE_BZIP2", "HAVE_7Z" }
     resdefines { "INSTALL_PAYLOAD_ZIP=.\\%{cfg.targetdir}\\InstallerData.dat" }
     disablewarnings {
-      "4018", "4100", "4131", "4244", "4267", "4302", "4311",
+      "4018", "4100", "4131", "4244", "4245", "4267", "4302", "4311",
       "4312", "4456", "4457", "4838", "4702", "4706", "4996"
     }
     installer_files()
@@ -619,8 +633,8 @@ workspace "SumatraPDF"
     -- this is to prevent dll hijacking
     linkoptions { "/DELAYLOAD:gdiplus.dll /DELAYLOAD:shlwapi.dll /DELAYLOAD:version.dll /DELAYLOAD:wininet.dll"}
 
-    dependson { "SumatraPDF-no-MUPDF", "PdfFilter", "PdfPreview", "Uninstaller" }
-    prebuildcommands { "cd %{cfg.targetdir} & ..\\bin\\MakeLZSA.exe InstallerData.dat SumatraPDF-no-MUPDF.exe:SumatraPDF.exe libmupdf.dll:libmupdf.dll PdfFilter.dll:PdfFilter.dll PdfPreview.dll:PdfPreview.dll Uninstaller.exe:uninstall.exe ..\\mupdf\\resources\\fonts\\droid\\DroidSansFallback.ttf:DroidSansFallback.ttf"  }
+    dependson { "SumatraPDF-mupdf-dll", "PdfFilter", "PdfPreview", "Uninstaller" }
+    prebuildcommands { "cd %{cfg.targetdir} & ..\\..\\bin\\MakeLZSA.exe InstallerData.dat SumatraPDF-mupdf-dll.exe:SumatraPDF.exe libmupdf.dll:libmupdf.dll PdfFilter.dll:PdfFilter.dll PdfPreview.dll:PdfPreview.dll Uninstaller.exe:uninstall.exe ..\\..\\mupdf\\resources\\fonts\\droid\\DroidSansFallback.ttf:DroidSansFallback.ttf"  }
 
   project "TestApp"
     kind "WindowedApp"
@@ -643,7 +657,7 @@ workspace "SumatraPDF"
     -- if there is a c/c++ file, so we add a no-op cpp file to force This logic
     files { "tools/premake/no_op_console.c" }
     dependson {
-      "PdfPreview", "PdfFilter", "SumatraPDF", "SumatraPDF-no-MUPDF",
+      "PdfPreview", "PdfFilter", "SumatraPDF", "SumatraPDF-mupdf-dll",
       "test_util", "cmapdump", "signfile", "plugin-test", "MakeLZSA",
       "mutool", "mudraw", "Uninstaller", "enginedump", "efi", "unarr"
     }

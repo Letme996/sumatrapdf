@@ -117,7 +117,6 @@ function jbig2dec_files()
     "jbig2_huffman.c",
     "jbig2_halftone.c",
     "jbig2_image.c",
-    "jbig2_metadata.c",
     "jbig2_mmr.c",
     "jbig2_page.c",
     "jbig2_refinement.c",
@@ -129,27 +128,66 @@ end
 
 function openjpeg_files()
   files_in_dir( "ext/openjpeg/src/lib/openjp2", {
-    "*.c",
+    "bio.c",
+    "cidx_manager.c",
+    "cio.c",
+    "dwt.c",
+    "event.c",
+    "function_list.c",
+    "image.c",
+    "invert.c",
+    "j2k.c",
+    "jp2.c",
+    "mct.c",
+    "mqc.c",
+    "openjpeg.c",
+    "opj_clock.c",
+    "opj_malloc.c",
+    "phix_manager.c",
+    "pi.c",
+    "ppix_manager.c",
+    "sparse_array.c",
+    "t1.c",
+    "t2.c",
+    "tcd.c",
+    "tgt.c",
+    "thix_manager.c",
+    "thread.c",
+    "tpix_manager.c",
     "*.h",
   })
 end
 
 function libwebp_files()
-  files_in_dir("ext/libwebp/dec", {
-    "alpha.c", "buffer.c", "frame.c", "idec.c", "io.c", "quant.c",
-    "tree.c", "vp8.c", "vp8l.c", "webp.c",
+  files("ext/libwebp/src/dec/*.c")
+
+  files_in_dir("ext/libwebp/src/dsp", {
+    "alpha_processing.c", 
+    "alpha_processing_sse2.c",
+    "alpha_processing_sse41.c",
+    "cost.c", 
+    "cpu.c", 
+    "dec.c", 
+    "dec_clip_tables.c",
+    "dec_sse2.c",
+    "dec_sse41.c",
+    "filters.c",
+    "filters_sse2.c",
+    "lossless.c",
+    "lossless_sse2.c",
+    "rescaler.c",
+    "rescaler_sse2.c",
+    "ssim.c",
+    "ssim_sse2.c",
+    "upsampling.c",
+    "upsampling_sse2.c",
+    "upsampling_sse41.c",
+    "yuv.c",
+    "yuv_sse2.c",
+    "yuv_sse41.c",
   })
 
-  files_in_dir("ext/libwebp/dsp", {
-    "alpha_processing.c", "cpu.c", "dec.c", "dec_sse2.c", "lossless.c",
-    "lossless_sse2.c", "upsampling.c", "upsampling_sse2.c", "yuv.c",
-    "yuv_sse2.c", "dec_clip_tables.c", "alpha_processing_sse2.c",
-  })
-
-  files_in_dir("ext/libwebp/utils", {
-    "bit_reader.c", "color_cache.c", "filters.c", "huffman.c",
-    "quant_levels_dec.c", "rescaler.c", "thread.c", "utils.c", "random.c",
-  })
+  files("ext/libwebp/src/utils/*.c")
 end
 
 function libjpeg_turbo_files()
@@ -165,7 +203,7 @@ function libjpeg_turbo_files()
   --to build non-assembly version, use this:
   --files {"ext/libjpeg-turbo/jsimd_none.c"}
 
-  filter {'platforms:x32'}
+  filter {'platforms:x32 or x32_xp'}
     files_in_dir("ext/libjpeg-turbo/simd", {
       "jsimdcpu.asm", "jccolmmx.asm", "jcgrammx.asm", "jdcolmmx.asm",
     	"jcsammmx.asm", "jdsammmx.asm", "jdmermmx.asm", "jcqntmmx.asm",
