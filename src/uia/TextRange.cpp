@@ -1,14 +1,19 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
 #include "utils/WinDynCalls.h"
-#include "BaseEngine.h"
+
+#include "wingui/TreeModel.h"
+
+#include "Annotation.h"
+#include "EngineBase.h"
 #include "uia/TextRange.h"
+#include "DisplayMode.h"
 #include "SettingsStructs.h"
 #include "Controller.h"
-#include "EngineManager.h"
+#include "EngineCreate.h"
 #include "DisplayModel.h"
 #include "uia/DocumentProvider.h"
 #include "uia/Constants.h"
@@ -87,16 +92,16 @@ bool SumatraUIAutomationTextRange::IsEmptyRange() const {
 }
 
 int SumatraUIAutomationTextRange::GetPageGlyphCount(int pageNum) {
-    AssertCrash(document->IsDocumentLoaded());
-    AssertCrash(pageNum > 0);
+    CrashIf(!document->IsDocumentLoaded());
+    CrashIf(pageNum <= 0);
 
     int pageLen;
-    document->GetDM()->textCache->GetData(pageNum, &pageLen);
+    document->GetDM()->textCache->GetTextForPage(pageNum, &pageLen);
     return pageLen;
 }
 
 int SumatraUIAutomationTextRange::GetPageCount() {
-    AssertCrash(document->IsDocumentLoaded());
+    CrashIf(!document->IsDocumentLoaded());
 
     return document->GetDM()->PageCount();
 }
@@ -120,72 +125,84 @@ void SumatraUIAutomationTextRange::ValidateEndEndpoint() {
 int SumatraUIAutomationTextRange::FindPreviousWordEndpoint(int pageno, int idx, bool dontReturnInitial) {
     // based on TextSelection::SelectWordAt
     int textLen;
-    const WCHAR* pageText = document->GetDM()->textCache->GetData(pageno, &textLen);
+    auto cache = document->GetDM()->textCache;
+    const WCHAR* pageText = cache->GetTextForPage(pageno, &textLen);
 
     if (dontReturnInitial) {
         for (; idx > 0; idx--) {
-            if (isWordChar(pageText[idx - 1]))
+            if (isWordChar(pageText[idx - 1])) {
                 break;
+            }
         }
     }
 
     for (; idx > 0; idx--) {
-        if (!isWordChar(pageText[idx - 1]))
+        if (!isWordChar(pageText[idx - 1])) {
             break;
+        }
     }
     return idx;
 }
 
 int SumatraUIAutomationTextRange::FindNextWordEndpoint(int pageno, int idx, bool dontReturnInitial) {
     int textLen;
-    const WCHAR* pageText = document->GetDM()->textCache->GetData(pageno, &textLen);
+    auto cache = document->GetDM()->textCache;
+    const WCHAR* pageText = cache->GetTextForPage(pageno, &textLen);
 
     if (dontReturnInitial) {
         for (; idx < textLen; idx++) {
-            if (isWordChar(pageText[idx]))
+            if (isWordChar(pageText[idx])) {
                 break;
+            }
         }
     }
 
     for (; idx < textLen; idx++) {
-        if (!isWordChar(pageText[idx]))
+        if (!isWordChar(pageText[idx])) {
             break;
+        }
     }
     return idx;
 }
 
 int SumatraUIAutomationTextRange::FindPreviousLineEndpoint(int pageno, int idx, bool dontReturnInitial) {
     int textLen;
-    const WCHAR* pageText = document->GetDM()->textCache->GetData(pageno, &textLen);
+    auto cache = document->GetDM()->textCache;
+    const WCHAR* pageText = cache->GetTextForPage(pageno, &textLen);
 
     if (dontReturnInitial) {
         for (; idx > 0; idx--) {
-            if (pageText[idx - 1] != L'\n')
+            if (pageText[idx - 1] != L'\n') {
                 break;
+            }
         }
     }
 
     for (; idx > 0; idx--) {
-        if (pageText[idx - 1] == L'\n')
+        if (pageText[idx - 1] == L'\n') {
             break;
+        }
     }
     return idx;
 }
 
 int SumatraUIAutomationTextRange::FindNextLineEndpoint(int pageno, int idx, bool dontReturnInitial) {
     int textLen;
-    const WCHAR* pageText = document->GetDM()->textCache->GetData(pageno, &textLen);
+    auto cache = document->GetDM()->textCache;
+    const WCHAR* pageText = cache->GetTextForPage(pageno, &textLen);
 
     if (dontReturnInitial) {
         for (; idx < textLen; idx++) {
-            if (pageText[idx] != L'\n')
+            if (pageText[idx] != L'\n') {
                 break;
+            }
         }
     }
 
     for (; idx < textLen; idx++) {
-        if (pageText[idx] == L'\n')
+        if (pageText[idx] == L'\n') {
             break;
+        }
     }
     return idx;
 }
@@ -196,35 +213,40 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::QueryInterface(REFIID ri
     return QISearch(this, qit, riid, ppv);
 }
 
-ULONG STDMETHODCALLTYPE SumatraUIAutomationTextRange::AddRef(void) {
+ULONG STDMETHODCALLTYPE SumatraUIAutomationTextRange::AddRef() {
     return InterlockedIncrement(&refCount);
 }
 
-ULONG STDMETHODCALLTYPE SumatraUIAutomationTextRange::Release(void) {
+ULONG STDMETHODCALLTYPE SumatraUIAutomationTextRange::Release() {
     LONG res = InterlockedDecrement(&refCount);
     CrashIf(res < 0);
-    if (0 == res)
+    if (0 == res) {
         delete this;
+    }
     return res;
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Clone(ITextRangeProvider** clonedRange) {
-    if (clonedRange == nullptr)
+    if (clonedRange == nullptr) {
         return E_POINTER;
+    }
     *clonedRange = new SumatraUIAutomationTextRange(*this);
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Compare(ITextRangeProvider* range, BOOL* areSame) {
-    if (areSame == nullptr)
+    if (areSame == nullptr) {
         return E_POINTER;
-    if (range == nullptr)
+    }
+    if (range == nullptr) {
         return E_POINTER;
+    }
     // TODO: is range guaranteed to be a SumatraUIAutomationTextRange?
-    if (*((SumatraUIAutomationTextRange*)range) == *this)
+    if (*((SumatraUIAutomationTextRange*)range) == *this) {
         *areSame = TRUE;
-    else
+    } else {
         *areSame = FALSE;
+    }
     return S_OK;
 }
 
@@ -232,10 +254,12 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::CompareEndpoints(enum Te
                                                                          ITextRangeProvider* range,
                                                                          enum TextPatternRangeEndpoint targetEndPoint,
                                                                          int* compValue) {
-    if (range == nullptr)
+    if (range == nullptr) {
         return E_POINTER;
-    if (compValue == nullptr)
+    }
+    if (compValue == nullptr) {
         return E_POINTER;
+    }
 
     int comp_a_page, comp_a_idx;
     if (srcEndPoint == TextPatternRangeEndpoint_Start) {
@@ -262,23 +286,26 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::CompareEndpoints(enum Te
         return E_INVALIDARG;
     }
 
-    if (comp_a_page < comp_b_page)
+    if (comp_a_page < comp_b_page) {
         *compValue = -1;
-    else if (comp_a_page > comp_b_page)
+    } else if (comp_a_page > comp_b_page) {
         *compValue = 1;
-    else
+    } else {
         *compValue = comp_a_idx - comp_b_idx;
+    }
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::ExpandToEnclosingUnit(enum TextUnit textUnit) {
     // if document is closed, don't do anything
-    if (!document->IsDocumentLoaded())
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // if not set, don't do anything
-    if (IsNullRange())
+    if (IsNullRange()) {
         return S_OK;
+    }
 
     if (textUnit == TextUnit_Character) {
         // done
@@ -326,47 +353,52 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::ExpandToEnclosingUnit(en
     }
 }
 
-HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::FindAttribute(TEXTATTRIBUTEID attr, VARIANT val, BOOL backward,
+HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::FindAttribute([[maybe_unused]] TEXTATTRIBUTEID attr,
+                                                                      [[maybe_unused]] VARIANT val,
+                                                                      [[maybe_unused]] BOOL backward,
                                                                       ITextRangeProvider** found) {
-    UNUSED(attr);
-    UNUSED(val);
-    UNUSED(backward);
-    if (found == nullptr)
+    if (found == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // raw text doesn't have attributes so just don't find anything
     *found = nullptr;
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::FindText(BSTR text, BOOL backward, BOOL ignoreCase,
+HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::FindText([[maybe_unused]] BSTR text,
+                                                                 [[maybe_unused]] BOOL backward,
+                                                                 [[maybe_unused]] BOOL ignoreCase,
                                                                  ITextRangeProvider** found) {
-    UNUSED(text);
-    UNUSED(backward);
-    UNUSED(ignoreCase);
-    if (found == nullptr)
+    if (found == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // TODO: Support text searching
     return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetAttributeValue(TEXTATTRIBUTEID attr, VARIANT* value) {
-    UNUSED(attr);
-    if (value == nullptr)
+HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetAttributeValue([[maybe_unused]] TEXTATTRIBUTEID attr,
+                                                                          VARIANT* value) {
+    if (value == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // text doesn't have attributes, we don't support those
     IUnknown* not_supported = nullptr;
-    HRESULT hr = uia::GetReservedNotSupportedValue(&not_supported);
-    if (FAILED(hr))
+    HRESULT hr = UiaGetReservedNotSupportedValue(&not_supported);
+    if (FAILED(hr)) {
         return hr;
+    }
 
     value->vt = VT_UNKNOWN;
     value->punkVal = not_supported;
@@ -374,15 +406,18 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetAttributeValue(TEXTAT
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetBoundingRectangles(SAFEARRAY** boundingRects) {
-    if (boundingRects == nullptr)
+    if (boundingRects == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     if (IsNullRange()) {
         SAFEARRAY* sarray = SafeArrayCreateVector(VT_R8, 0, 0);
-        if (!sarray)
+        if (!sarray) {
             return E_OUTOFMEMORY;
+        }
 
         *boundingRects = sarray;
         return S_OK;
@@ -394,10 +429,12 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetBoundingRectangles(SA
 
 HRESULT STDMETHODCALLTYPE
 SumatraUIAutomationTextRange::GetEnclosingElement(IRawElementProviderSimple** enclosingElement) {
-    if (enclosingElement == nullptr)
+    if (enclosingElement == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     *enclosingElement = document;
     (*enclosingElement)->AddRef();
@@ -405,10 +442,12 @@ SumatraUIAutomationTextRange::GetEnclosingElement(IRawElementProviderSimple** en
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetText(int maxLength, BSTR* text) {
-    if (text == nullptr)
+    if (text == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     if (IsNullRange() || IsEmptyRange()) {
         *text = SysAllocString(L""); // 0-sized not-null string
@@ -419,31 +458,35 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetText(int maxLength, B
     selection.StartAt(startPage, startGlyph);
     selection.SelectUpTo(endPage, endGlyph);
 
-    AutoFreeW selected_text(selection.ExtractText(L"\r\n"));
+    AutoFreeWstr selected_text(selection.ExtractText(L"\r\n"));
     size_t selected_text_length = str::Len(selected_text);
 
     // -1 and [0, inf) are allowed
     if (maxLength > -2) {
-        if (maxLength != -1 && selected_text_length > (size_t)maxLength)
+        if (maxLength != -1 && selected_text_length > (size_t)maxLength) {
             selected_text[maxLength] = '\0'; // truncate
+        }
 
         *text = SysAllocString(selected_text);
-        if (*text)
+        if (*text) {
             return S_OK;
-        else
+        } else {
             return E_OUTOFMEMORY;
+        }
     } else {
         return E_INVALIDARG;
     }
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Move(enum TextUnit unit, int count, int* moved) {
-    if (moved == nullptr)
+    if (moved == nullptr) {
         return E_POINTER;
+    }
 
     // if document is closed, don't do anything
-    if (!document->IsDocumentLoaded())
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // Just move the endpoints using other methods
     *moved = 0;
@@ -451,24 +494,26 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Move(enum TextUnit unit,
 
     if (count > 0) {
         for (int i = 0; i < count; ++i) {
-            int sub_moved;
+            int sub_moved = 0;
             this->MoveEndpointByUnit(TextPatternRangeEndpoint_End, unit, 1, &sub_moved);
 
             // Move end first, other will succeed if this succeeds
-            if (sub_moved == 0)
+            if (sub_moved == 0) {
                 break;
+            }
 
             this->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, unit, 1, &sub_moved);
             ++*moved;
         }
     } else if (count < 0) {
         for (int i = 0; i < -count; ++i) {
-            int sub_moved;
+            int sub_moved = 0;
             this->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, unit, -1, &sub_moved);
 
             // Move start first, other will succeed if this succeeds
-            if (sub_moved == 0)
+            if (sub_moved == 0) {
                 break;
+            }
 
             this->MoveEndpointByUnit(TextPatternRangeEndpoint_End, unit, -1, &sub_moved);
             ++*moved;
@@ -480,16 +525,19 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Move(enum TextUnit unit,
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::MoveEndpointByUnit(TextPatternRangeEndpoint endpoint,
                                                                            TextUnit unit, int count, int* moved) {
-    if (moved == nullptr)
+    if (moved == nullptr) {
         return E_POINTER;
+    }
 
     // if document is closed, don't do anything
-    if (!document->IsDocumentLoaded())
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // if not set, don't do anything
-    if (IsNullRange())
+    if (IsNullRange()) {
         return S_OK;
+    }
 
     // what to move
     int *target_page, *target_glyph;
@@ -560,43 +608,45 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::MoveEndpointByUnit(TextP
 
             int retVal = 0;
             if (count > 0) {
-                for (int i = 0; i < count && (NextPage() || NextEndpoint()); ++i)
+                for (int i = 0; i < count && (NextPage() || NextEndpoint()); ++i) {
                     ++retVal;
+                }
             } else {
-                for (int i = 0; i < -count && (PreviousPage() || PrevEndpoint()); ++i)
+                for (int i = 0; i < -count && (PreviousPage() || PrevEndpoint()); ++i) {
                     ++retVal;
+                }
             }
 
             return retVal;
         }
     };
     class CharEndPointMover : public EndPointMover {
-        bool NextEndpoint() const {
+        bool NextEndpoint() const override {
             (*target_glyph)++;
             return true;
         }
-        bool PrevEndpoint() const {
+        bool PrevEndpoint() const override {
             (*target_glyph)--;
             return true;
         }
     };
     class WordEndPointMover : public EndPointMover {
-        bool NextEndpoint() const {
+        bool NextEndpoint() const override {
             (*target_glyph) = target->FindNextWordEndpoint(*target_page, *target_glyph, true);
             return true;
         }
-        bool PrevEndpoint() const {
+        bool PrevEndpoint() const override {
             (*target_glyph) = target->FindPreviousWordEndpoint(*target_page, *target_glyph, true);
             (*target_glyph)--;
             return true;
         }
     };
     class LineEndPointMover : public EndPointMover {
-        bool NextEndpoint() const {
+        bool NextEndpoint() const override {
             (*target_glyph) = target->FindNextLineEndpoint(*target_page, *target_glyph, true);
             return true;
         }
-        bool PrevEndpoint() const {
+        bool PrevEndpoint() const override {
             (*target_glyph) = target->FindPreviousLineEndpoint(*target_page, *target_glyph, true);
             (*target_glyph)--;
             return true;
@@ -678,8 +728,9 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::MoveEndpointByUnit(TextP
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::MoveEndpointByRange(TextPatternRangeEndpoint srcEndPoint,
                                                                             ITextRangeProvider* range,
                                                                             TextPatternRangeEndpoint targetEndPoint) {
-    if (range == nullptr)
+    if (range == nullptr) {
         return E_POINTER;
+    }
 
     // TODO: is range guaranteed to be a SumatraUIAutomationTextRange?
     SumatraUIAutomationTextRange* target = (SumatraUIAutomationTextRange*)range;
@@ -716,9 +767,10 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::MoveEndpointByRange(Text
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Select(void) {
-    if (!document->IsDocumentLoaded())
+HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Select() {
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     if (IsNullRange() || IsEmptyRange()) {
         document->GetDM()->textSelection->Reset();
@@ -731,18 +783,20 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::Select(void) {
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::AddToSelection(void) {
+HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::AddToSelection() {
     return E_FAIL;
 }
 
-HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::RemoveFromSelection(void) {
+HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::RemoveFromSelection() {
     return E_FAIL;
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::ScrollIntoView(BOOL alignToTop) {
-    if (!document->IsDocumentLoaded())
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
+#if 0
     // extract target location
     int target_page, target_idx;
     if (IsNullRange()) {
@@ -755,6 +809,7 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::ScrollIntoView(BOOL alig
         target_page = endPage;
         target_idx = endGlyph;
     }
+#endif
 
     // TODO: Scroll to target_page, target_idx
     // document->GetDM()->ScrollYTo()
@@ -762,24 +817,28 @@ HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::ScrollIntoView(BOOL alig
 }
 
 HRESULT STDMETHODCALLTYPE SumatraUIAutomationTextRange::GetChildren(SAFEARRAY** children) {
-    if (children == nullptr)
+    if (children == nullptr) {
         return E_POINTER;
-    if (!document->IsDocumentLoaded())
+    }
+    if (!document->IsDocumentLoaded()) {
         return E_FAIL;
+    }
 
     // return all children in range
     if (IsNullRange()) {
         SAFEARRAY* psa = SafeArrayCreateVector(VT_UNKNOWN, 0, 0);
-        if (!psa)
+        if (!psa) {
             return E_OUTOFMEMORY;
+        }
 
         *children = psa;
         return S_OK;
     }
 
     SAFEARRAY* psa = SafeArrayCreateVector(VT_UNKNOWN, 0, endPage - startPage + 1);
-    if (!psa)
+    if (!psa) {
         return E_OUTOFMEMORY;
+    }
 
     SumatraUIAutomationPageProvider* it = document->GetFirstPage();
     while (it) {

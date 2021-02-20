@@ -1,4 +1,4 @@
-/* Copyright 2015 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #define CANVAS_CLASS_NAME L"SUMATRA_PDF_CANVAS"
@@ -7,15 +7,15 @@
 
 #define WEBSITE_MAIN_URL L"https://www.sumatrapdfreader.org/"
 #define WEBSITE_MANUAL_URL L"https://www.sumatrapdfreader.org/manual.html"
-#define WEBSITE_TRANSLATIONS_URL L"https://www.notion.so/How-to-contribute-translation-da023536e9774982b09937c8ed8cf6c1"
+#define WEBSITE_TRANSLATIONS_URL L"https://www.sumatrapdfreader.org/docs/How-to-contribute-translation.html"
 
 #ifndef CRASH_REPORT_URL
-#define CRASH_REPORT_URL L"https://www.notion.so/Join-the-project-as-a-developer-be6ef085e89f49038c2b671c0743b690"
+#define CRASH_REPORT_URL L"https://www.sumatrapdfreader.org/docs/Join-the-project-as-a-developer.html"
 #endif
 
 // scrolls half a page down/up (needed for Shift+Up/Down)
-#define SB_HPAGEUP (WM_USER + 1)
-#define SB_HPAGEDOWN (WM_USER + 2)
+#define SB_HPAGEUP (WM_USER + 102)
+#define SB_HPAGEDOWN (WM_USER + 103)
 
 #define HIDE_CURSOR_TIMER_ID 3
 #define HIDE_CURSOR_DELAY_IN_MS 3000
@@ -56,7 +56,8 @@ enum MenuToolbarFlags {
     MF_NOT_FOR_CHM = 1 << 2,
     MF_NOT_FOR_EBOOK_UI = 1 << 3,
     MF_CBX_ONLY = 1 << 4,
-#define PERM_FLAG_OFFSET 5
+    MF_RAMICRO_ONLY = 1 << 5,
+#define PERM_FLAG_OFFSET 6
     MF_REQ_INET_ACCESS = Perm_InternetAccess << PERM_FLAG_OFFSET,
     MF_REQ_DISK_ACCESS = Perm_DiskAccess << PERM_FLAG_OFFSET,
     MF_REQ_PREF_ACCESS = Perm_SavePreferences << PERM_FLAG_OFFSET,
@@ -72,22 +73,23 @@ enum MenuToolbarFlags {
 #define RIGHT_TXT_FONT L"Arial Black"
 #define RIGHT_TXT_FONT_SIZE 12
 
-class Controller;
+struct Controller;
 class Favorites;
-class FileHistory;
-class WindowInfo;
-class NotificationWnd;
+struct FileHistory;
+struct WindowInfo;
+struct NotificationWnd;
 class RenderCache;
-class TabInfo;
-class LabelWithCloseWnd;
+struct TabInfo;
+struct LabelWithCloseWnd;
 struct SessionData;
+struct DropDownCtrl;
 
 // all defined in SumatraPDF.cpp
 extern bool gDebugShowLinks;
 extern bool gShowFrameRate;
 
 extern const WCHAR* gPluginURL;
-extern std::vector<WindowInfo*> gWindows;
+extern Vec<WindowInfo*> gWindows;
 extern Favorites gFavorites;
 extern FileHistory gFileHistory;
 extern WNDPROC DefWndProcCloseButton;
@@ -104,22 +106,23 @@ void InitializePolicies(bool restrict);
 void RestrictPolicies(int revokePermission);
 bool HasPermission(int permission);
 bool IsUIRightToLeft();
-bool LaunchBrowser(const WCHAR* url);
+bool SumatraLaunchBrowser(const WCHAR* url);
 bool OpenFileExternally(const WCHAR* path);
 void AssociateExeWithPdfExtension();
 void CloseTab(WindowInfo* win, bool quitIfLast = false);
 bool MayCloseWindow(WindowInfo* win);
 void CloseWindow(WindowInfo* win, bool quitIfLast, bool forceClose = false);
-void SetSidebarVisibility(WindowInfo* win, bool tocVisible, bool favVisible);
+void SetSidebarVisibility(WindowInfo* win, bool tocVisible, bool showFavorites);
 void RememberFavTreeExpansionState(WindowInfo* win);
-void LayoutTreeContainer(LabelWithCloseWnd* l, HWND hwndTree);
+void LayoutTreeContainer(LabelWithCloseWnd* l, DropDownCtrl*, HWND hwndTree);
 void AdvanceFocus(WindowInfo* win);
 bool WindowInfoStillValid(WindowInfo* win);
 void SetCurrentLanguageAndRefreshUI(const char* langCode);
 void UpdateDocumentColors();
-void UpdateTabFileDisplayStateForWin(WindowInfo* win, TabInfo* td);
-bool FrameOnKeydown(WindowInfo* win, WPARAM key, LPARAM lparam, bool inTextfield = false);
-void ReloadDocument(WindowInfo* win, bool autorefresh = false);
+void UpdateFixedPageScrollbarsVisibility();
+void UpdateTabFileDisplayStateForTab(TabInfo* tab);
+bool FrameOnKeydown(WindowInfo* win, WPARAM key, LPARAM lp, bool inTextfield = false);
+void ReloadDocument(WindowInfo* win, bool autoRefresh);
 void OnMenuViewFullscreen(WindowInfo* win, bool presentation = false);
 void RelayoutWindow(WindowInfo* win);
 
@@ -127,30 +130,55 @@ WindowInfo* FindWindowInfoByHwnd(HWND hwnd);
 // note: background tabs are only searched if focusTab is true
 WindowInfo* FindWindowInfoByFile(const WCHAR* file, bool focusTab);
 WindowInfo* FindWindowInfoBySyncFile(const WCHAR* file, bool focusTab);
-WindowInfo* FindWindowInfoByTab(TabInfo* tab);
 WindowInfo* FindWindowInfoByController(Controller* ctrl);
+
+class EngineBase;
 
 // LoadDocument carries a lot of state, this holds them in
 // one place
 struct LoadArgs {
-    explicit LoadArgs(const WCHAR* fileName, WindowInfo* win = nullptr)
-        : fileName(fileName), win(win), showWin(true), forceReuse(false), isNewWindow(false), placeWindow(true) {}
+    explicit LoadArgs(const WCHAR* fileName, WindowInfo* win) {
+        this->fileName = fileName;
+        this->win = win;
+    }
 
-    const WCHAR* fileName;
-    WindowInfo* win;
-    bool showWin;
-    bool forceReuse;
+    explicit LoadArgs(const char* fileName, WindowInfo* win) {
+        this->win = win;
+        fileNameToFree = strconv::Utf8ToWstr(fileName);
+        this->fileName = fileNameToFree;
+    }
+
+    ~LoadArgs() {
+        str::Free(fileNameToFree);
+    }
+
+    // we don't own those values
+    EngineBase* engine{nullptr};
+    const WCHAR* fileName{nullptr};
+    WindowInfo* win{nullptr};
+
+    const WCHAR* fileNameToFree{nullptr};
+
+    bool showWin{true};
+    bool forceReuse{false};
+    // over-writes placeWindow and other flags and forces no changing
+    // of window location after loading
+    bool noPlaceWindow{false};
+
     // for internal use
-    bool isNewWindow;
-    bool placeWindow;
+    bool isNewWindow{false};
+    bool placeWindow{true};
+    // TODO: this is hacky. I save prefs too frequently. Need to go over
+    // and rationalize all prefs::Save() calls
+    bool noSavePrefs{false};
 };
 
 WindowInfo* LoadDocument(LoadArgs& args);
 WindowInfo* CreateAndShowWindowInfo(SessionData* data = nullptr);
 
-UINT MbRtlReadingMaybe();
+uint MbRtlReadingMaybe();
 void MessageBoxWarning(HWND hwnd, const WCHAR* msg, const WCHAR* title = nullptr);
-void UpdateCursorPositionHelper(WindowInfo* win, PointI pos, NotificationWnd* wnd);
+void UpdateCursorPositionHelper(WindowInfo* win, Point pos, NotificationWnd* wnd);
 bool DocumentPathExists(const WCHAR* path);
 void EnterFullScreen(WindowInfo* win, bool presentation = false);
 void ExitFullScreen(WindowInfo* win);
@@ -160,5 +188,9 @@ void GetEbookUiColors(COLORREF& text, COLORREF& bg);
 void RebuildMenuBarForWindow(WindowInfo* win);
 void UpdateCheckAsync(WindowInfo* win, bool autoCheck);
 void DeleteWindowInfo(WindowInfo* win);
+void SwitchToDisplayMode(WindowInfo* win, DisplayMode displayMode, bool keepContinuous = false);
+void WindowInfoRerender(WindowInfo* win, bool includeNonClientArea = false);
 
-LRESULT CALLBACK WndProcFrame(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK WndProcFrame(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+
+void ShutdownCleanup();

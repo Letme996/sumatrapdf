@@ -1,9 +1,10 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
 #include "utils/Archive.h"
+#include "utils/PalmDbReader.h"
 #include "utils/GdiPlusUtil.h"
 #include "utils/HtmlParserLookup.h"
 #include "utils/HtmlPullParser.h"
@@ -11,14 +12,19 @@
 #include "utils/ThreadUtil.h"
 #include "utils/Timer.h"
 #include "utils/TrivialHtmlParser.h"
+#include "utils/Log.h"
 
-#include "BaseEngine.h"
+#include "wingui/TreeModel.h"
+
+#include "Annotation.h"
+#include "EngineBase.h"
 #include "EbookBase.h"
 #include "EbookDoc.h"
 #include "MobiDoc.h"
 #include "HtmlFormatter.h"
 #include "Doc.h"
 
+#include "DisplayMode.h"
 #include "SettingsStructs.h"
 #include "Controller.h"
 #include "EbookController.h"
@@ -26,8 +32,6 @@
 
 #include "EbookControls.h"
 #include "Translations.h"
-//#define NOLOG 0
-#include "utils/DebugLog.h"
 
 static const WCHAR* GetFontName() {
     // TODO: validate the name?
@@ -42,7 +46,7 @@ static float GetFontSize() {
     return fontSize;
 }
 
-HtmlFormatterArgs* CreateFormatterArgsDoc(Doc doc, int dx, int dy, Allocator* textAllocator) {
+HtmlFormatterArgs* CreateFormatterArgsDoc(const Doc& doc, int dx, int dy, Allocator* textAllocator) {
     HtmlFormatterArgs* args = CreateFormatterDefaultArgs(dx, dy, textAllocator);
     args->htmlStr = doc.GetHtmlData();
     args->SetFontName(GetFontName());
@@ -50,21 +54,21 @@ HtmlFormatterArgs* CreateFormatterArgsDoc(Doc doc, int dx, int dy, Allocator* te
     return args;
 }
 
-class EbookTocDest : public DocTocItem, public PageDestination {
-    AutoFreeW url;
+static TocItem* newEbookTocDest(TocItem* parent, const WCHAR* title, int reparseIdx) {
+    auto res = new TocItem(parent, title, reparseIdx);
+    res->dest = new PageDestination();
+    res->dest->kind = kindDestinationScrollTo;
+    res->dest->pageNo = reparseIdx;
+    return res;
+}
 
-  public:
-    EbookTocDest(const WCHAR* title, int reparseIdx) : DocTocItem(str::Dup(title), reparseIdx), url(nullptr) {}
-    EbookTocDest(const WCHAR* title, const WCHAR* url) : DocTocItem(str::Dup(title)), url(str::Dup(url)) {}
-
-    PageDestination* GetLink() override { return this; }
-
-    // PageDestination
-    PageDestType GetDestType() const override { return url ? PageDestType::LaunchURL : PageDestType::ScrollTo; }
-    int GetDestPageNo() const override { return pageNo; }
-    RectD GetDestRect() const override { return RectD(); }
-    WCHAR* GetDestValue() const override { return str::Dup(url); }
-};
+static TocItem* newEbookTocDest(TocItem* parent, const WCHAR* title, const WCHAR* url) {
+    auto res = new TocItem(parent, title, 0);
+    res->dest = new PageDestination();
+    res->dest->kind = kindDestinationLaunchURL;
+    res->dest->value = str::Dup(url);
+    return res;
+}
 
 struct EbookFormattingData {
     enum { MAX_PAGES = 256 };
@@ -94,7 +98,7 @@ class EbookFormattingThread : public ThreadBase {
     ControllerCallback* cb = nullptr;
 
     // state used during layout process
-    HtmlPage* pages[EbookFormattingData::MAX_PAGES];
+    HtmlPage* pages[EbookFormattingData::MAX_PAGES]{};
     int pageCount = 0;
 
     // we want to send 2 pages after reparseIdx as soon as we have them,
@@ -107,19 +111,23 @@ class EbookFormattingThread : public ThreadBase {
     void SendPagesIfNecessary(bool force, bool finished);
     bool Format();
 
-    EbookFormattingThread(Doc doc, HtmlFormatterArgs* args, EbookController* ctrl, int reparseIdx,
+    EbookFormattingThread(const Doc& doc, HtmlFormatterArgs* args, EbookController* ctrl, int reparseIdx,
                           ControllerCallback* cb);
     virtual ~EbookFormattingThread();
 
     // ThreadBase
-    virtual void Run();
+    void Run() override;
 };
 
-EbookFormattingThread::EbookFormattingThread(Doc doc, HtmlFormatterArgs* args, EbookController* ctrl, int reparseIdx,
-                                             ControllerCallback* cb)
-    : doc(doc), formatterArgs(args), cb(cb), controller(ctrl), reparseIdx(reparseIdx) {
+EbookFormattingThread::EbookFormattingThread(const Doc& doc, HtmlFormatterArgs* args, EbookController* ctrl,
+                                             int reparseIdx, ControllerCallback* cb) {
+    this->doc = doc;
+    this->cb = cb;
+    this->controller = ctrl;
+    this->formatterArgs = args;
+    this->reparseIdx = reparseIdx;
     CrashIf(reparseIdx < 0);
-    AssertCrash(doc.IsDocLoaded() || (doc.IsNone() && (nullptr != args->htmlStr)));
+    CrashIf(!(doc.IsDocLoaded() || (doc.IsNone() && (!args->htmlStr.empty()))));
 }
 
 EbookFormattingThread::~EbookFormattingThread() {
@@ -184,21 +192,22 @@ bool EbookFormattingThread::Format() {
 }
 
 void EbookFormattingThread::Run() {
-    Timer t;
+    // auto t = TimeGet();
     Format();
     // lf("Formatting time: %.2f ms", t.Stop());
 }
 
 static void DeletePages(Vec<HtmlPage*>** toDeletePtr) {
-    if (!*toDeletePtr)
+    if (!*toDeletePtr) {
         return;
+    }
 
     DeleteVecMembers(**toDeletePtr);
     delete *toDeletePtr;
     *toDeletePtr = nullptr;
 }
 
-EbookController::EbookController(Doc doc, EbookControls* ctrls, ControllerCallback* cb)
+EbookController::EbookController(const Doc& doc, EbookControls* ctrls, ControllerCallback* cb)
     : Controller(cb), pageSize(0, 0) {
     this->doc = doc;
     this->ctrls = ctrls;
@@ -228,6 +237,7 @@ EbookController::~EbookController() {
     DestroyEbookControls(ctrls);
     delete pageAnchorIds;
     delete pageAnchorIdxs;
+    delete tocTree;
 }
 
 // stop layout thread (if we're closing a document we'll delete
@@ -251,7 +261,7 @@ void EbookController::CloseCurrentDocument() {
     StopFormattingThread();
     DeletePages(&pages);
     doc.Delete();
-    pageSize = SizeI(0, 0);
+    pageSize = Size(0, 0);
 }
 
 // returns page whose content contains reparseIdx
@@ -293,8 +303,9 @@ Vec<HtmlPage*>* EbookController::GetPages() {
 void EbookController::HandlePagesFromEbookLayout(EbookFormattingData* ft) {
     if (formattingThreadNo != ft->threadNo) {
         // this is a message from cancelled thread, we can disregard
-        lf("EbookController::HandlePagesFromEbookLayout() thread msg discarded, curr thread: %d, sending thread: %d",
-           formattingThreadNo, ft->threadNo);
+        logf(
+            "EbookController::HandlePagesFromEbookLayout() thread msg discarded, curr thread: %d, sending thread: %d\n",
+            formattingThreadNo, ft->threadNo);
         DeleteEbookFormattingData(ft);
         return;
     }
@@ -330,7 +341,7 @@ void EbookController::HandlePagesFromEbookLayout(EbookFormattingData* ft) {
 
 void EbookController::TriggerLayout() {
     Size s = ctrls->pagesLayout->GetPage1()->GetDrawableSize();
-    SizeI size(s.Width, s.Height);
+    Size size(s.dx, s.dy);
     if (size.IsEmpty()) {
         // we haven't been sized yet
         return;
@@ -345,7 +356,7 @@ void EbookController::TriggerLayout() {
         return;
     }
 
-    dbglog::CrashLogF("EbookController::TriggerLayout(): starting formatting thread\n");
+    logf("EbookController::TriggerLayout(): starting formatting thread\n");
     // lf("(%3d,%3d) EbookController::TriggerLayout",size.dx, size.dy);
     pageSize = size; // set it early to prevent re-doing layout at the same size
 
@@ -360,9 +371,7 @@ void EbookController::TriggerLayout() {
     UpdateStatus();
 }
 
-void EbookController::SizeChangedPage(Control* c, int dx, int dy) {
-    UNUSED(dx);
-    UNUSED(dy);
+void EbookController::SizeChangedPage(Control* c, [[maybe_unused]] int dx, [[maybe_unused]] int dy) {
     CrashIf(!(c == ctrls->pagesLayout->GetPage1() || c == ctrls->pagesLayout->GetPage2()));
     // delay re-layout so that we don't unnecessarily do the
     // work as long as the user is still resizing the window
@@ -371,26 +380,18 @@ void EbookController::SizeChangedPage(Control* c, int dx, int dy) {
     cb->RequestDelayedLayout(200);
 }
 
-void EbookController::ClickedNext(Control* c, int x, int y) {
-    UNUSED(c);
-    UNUSED(x);
-    UNUSED(y);
+void EbookController::ClickedNext([[maybe_unused]] Control* c, [[maybe_unused]] int x, [[maybe_unused]] int y) {
     // CrashIf(c != ctrls->next);
     GoToNextPage();
 }
 
-void EbookController::ClickedPrev(Control* c, int x, int y) {
-    UNUSED(c);
-    UNUSED(x);
-    UNUSED(y);
+void EbookController::ClickedPrev([[maybe_unused]] Control* c, [[maybe_unused]] int x, [[maybe_unused]] int y) {
     // CrashIf(c != ctrls->prev);
     GoToPrevPage();
 }
 
 // (x, y) is in the coordinates of c
-void EbookController::ClickedProgress(Control* c, int x, int y) {
-    UNUSED(x);
-    UNUSED(y);
+void EbookController::ClickedProgress([[maybe_unused]] Control* c, [[maybe_unused]] int x, [[maybe_unused]] int y) {
     CrashIf(c != ctrls->progress);
     float perc = ctrls->progress->GetPercAt(x);
     int pageCount = (int)GetPages()->size();
@@ -399,10 +400,12 @@ void EbookController::ClickedProgress(Control* c, int x, int y) {
 }
 
 void EbookController::OnClickedLink(int pageNo, DrawInstr* link) {
-    AutoFreeW url(str::conv::FromHtmlUtf8(link->str.s, link->str.len));
+    AutoFreeWstr url(strconv::FromHtmlUtf8(link->str.s, link->str.len));
     if (url::IsAbsolute(url)) {
-        EbookTocDest dest(nullptr, url);
-        cb->GotoLink(&dest);
+        // TODO: optimize: create just the destination
+        auto dest = newEbookTocDest(nullptr, nullptr, url);
+        cb->GotoLink(dest->GetPageDestination());
+        delete dest;
         return;
     }
 
@@ -417,7 +420,7 @@ void EbookController::OnClickedLink(int pageNo, DrawInstr* link) {
                     AutoFree basePath(str::DupN(di.str.s, di.str.len));
                     AutoFree relPath(ResolveHtmlEntities(link->str.s, link->str.len));
                     AutoFree absPath(NormalizeURL(relPath, basePath));
-                    url.Set(str::conv::FromUtf8(absPath));
+                    url.Set(strconv::Utf8ToWstr(absPath.Get()));
                     j = 0; // done
                     break;
                 }
@@ -431,8 +434,10 @@ void EbookController::OnClickedLink(int pageNo, DrawInstr* link) {
         idx = ResolvePageAnchor(url);
     }
     if (idx != -1) {
-        EbookTocDest dest(nullptr, idx);
-        cb->GotoLink(&dest);
+        // TODO: optimize, create just a destination
+        auto dest = newEbookTocDest(nullptr, nullptr, idx);
+        cb->GotoLink(dest->GetPageDestination());
+        delete dest;
     }
 }
 
@@ -473,13 +478,13 @@ int EbookController::GetMaxPageCount() const {
 void EbookController::UpdateStatus() {
     int pageCount = GetMaxPageCount();
     if (FormattingInProgress()) {
-        AutoFreeW s(str::Format(_TR("Formatting the book... %d pages"), pageCount));
+        AutoFreeWstr s(str::Format(_TR("Formatting the book... %d pages"), pageCount));
         ctrls->status->SetText(s);
         ctrls->progress->SetFilled(0.f);
         return;
     }
 
-    AutoFreeW s(str::Format(L"%s %d / %d", _TR("Page:"), currPageNo, pageCount));
+    AutoFreeWstr s(str::Format(L"%s %d / %d", _TR("Page:"), currPageNo, pageCount));
     ctrls->status->SetText(s);
 #if 1
     ctrls->progress->SetFilled(PercFromInt(pageCount, currPageNo));
@@ -501,8 +506,8 @@ void EbookController::GoToPage(int pageNo, bool addNavPoint) {
     // Hopefully prevent crashes like 55175
     if (!pages) {
         // TODO: remove when we figure out why this happens
-        dbglog::CrashLogF("EbookController::GoToPage(): pageNo: %d, currentPageNo: %d\n", pageNo, this->currPageNo);
-        CrashIf(!pages);
+        logf("EbookController::GoToPage(): pageNo: %d, currentPageNo: %d\n", pageNo, this->currPageNo);
+        SubmitCrashIf(!pages);
         return;
     }
 
@@ -544,10 +549,10 @@ bool EbookController::GoToNextPage() {
     return true;
 }
 
-bool EbookController::GoToPrevPage(bool toBottom) {
-    UNUSED(toBottom);
+bool EbookController::GoToPrevPage([[maybe_unused]] bool toBottom) {
     int dist = IsDoublePage() ? 2 : 1;
-    if (currPageNo == 1) {
+    if (currPageNo <= dist) {
+        // seen a crash were currPageNo here was 0
         return false;
     }
     GoToPage(currPageNo - dist, false);
@@ -562,7 +567,7 @@ void EbookController::StartLayouting(int startReparseIdxArg, DisplayMode display
     currPageReparseIdx = startReparseIdxArg;
     // displayMode could be any value if alternate UI was used, we have to limit it to
     // either DM_SINGLE_PAGE or DM_FACING
-    if (DM_AUTOMATIC == displayMode) {
+    if (DisplayMode::Automatic == displayMode) {
         displayMode = gGlobalPrefs->defaultDisplayModeEnum;
     }
 
@@ -576,7 +581,7 @@ bool EbookController::IsDoublePage() const {
     return ctrls->pagesLayout->GetPage2()->IsVisible();
 }
 
-static RenderedBitmap* RenderFirstDocPageToBitmap(Doc doc, SizeI pageSize, SizeI bmpSize, int border) {
+static RenderedBitmap* RenderFirstDocPageToBitmap(Doc doc, Size pageSize, Size bmpSize, int border) {
     PoolAllocator textAllocator;
     auto dx = pageSize.dx - 2 * border;
     auto dy = pageSize.dy - 2 * border;
@@ -593,21 +598,21 @@ static RenderedBitmap* RenderFirstDocPageToBitmap(Doc doc, SizeI pageSize, SizeI
 
     Bitmap pageBmp(pageSize.dx, pageSize.dy, PixelFormat24bppRGB);
     Graphics g(&pageBmp);
-    Rect r(0, 0, pageSize.dx, pageSize.dy);
+    Gdiplus::Rect r(0, 0, pageSize.dx, pageSize.dy);
     r.Inflate(1, 1);
     SolidBrush br(Color(255, 255, 255));
     g.FillRectangle(&br, r);
 
     ITextRender* textRender = CreateTextRender(renderMethod, &g, pageSize.dx, pageSize.dy);
     textRender->SetTextBgColor(Color(255, 255, 255));
-    DrawHtmlPage(&g, textRender, &pd->instructions, (REAL)border, (REAL)border, false, Color((ARGB)Color::Black));
+    DrawHtmlPage(&g, textRender, &pd->instructions, (float)border, (float)border, false, Color((ARGB)Color::Black));
     delete pd;
     delete textRender;
 
     Bitmap res(bmpSize.dx, bmpSize.dy, PixelFormat24bppRGB);
     Graphics g2(&res);
     g2.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-    g2.DrawImage(&pageBmp, Rect(0, 0, bmpSize.dx, bmpSize.dy), 0, 0, pageSize.dx, pageSize.dy, UnitPixel);
+    g2.DrawImage(&pageBmp, Gdiplus::Rect(0, 0, bmpSize.dx, bmpSize.dy), 0, 0, pageSize.dx, pageSize.dy, UnitPixel);
 
     HBITMAP hbmp;
     Status status = res.GetHBITMAP((ARGB)Color::White, &hbmp);
@@ -617,12 +622,12 @@ static RenderedBitmap* RenderFirstDocPageToBitmap(Doc doc, SizeI pageSize, SizeI
     return new RenderedBitmap(hbmp, bmpSize);
 }
 
-static RenderedBitmap* ThumbFromCoverPage(Doc doc, SizeI size) {
+static RenderedBitmap* ThumbFromCoverPage(const Doc& doc, Size size) {
     ImageData* coverImage = doc.GetCoverImage();
     if (!coverImage) {
         return nullptr;
     }
-    Bitmap* coverBmp = BitmapFromData(coverImage->data, coverImage->len);
+    Bitmap* coverBmp = BitmapFromData(coverImage->AsSpan());
     if (!coverBmp) {
         return nullptr;
     }
@@ -635,7 +640,8 @@ static RenderedBitmap* ThumbFromCoverPage(Doc doc, SizeI size) {
     }
     Graphics g(&res);
     g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-    Status status = g.DrawImage(coverBmp, Rect(0, 0, size.dx, size.dy), 0, 0, coverBmp->GetWidth(), fromDy, UnitPixel);
+    Status status =
+        g.DrawImage(coverBmp, Gdiplus::Rect(0, 0, size.dx, size.dy), 0, 0, coverBmp->GetWidth(), fromDy, UnitPixel);
     if (status != Ok) {
         delete coverBmp;
         return nullptr;
@@ -644,12 +650,12 @@ static RenderedBitmap* ThumbFromCoverPage(Doc doc, SizeI size) {
     status = res.GetHBITMAP((ARGB)Color::White, &hbmp);
     delete coverBmp;
     if (status == Ok) {
-        return new RenderedBitmap(hbmp, SizeI(size.dx, size.dy));
+        return new RenderedBitmap(hbmp, Size(size.dx, size.dy));
     }
     return nullptr;
 }
 
-void EbookController::CreateThumbnail(SizeI size, const onBitmapRenderedCb& saveThumbnail) {
+void EbookController::CreateThumbnail(Size size, const onBitmapRenderedCb& saveThumbnail) {
     // TODO: create thumbnail asynchronously
     CrashIf(!doc.IsDocLoaded());
     // if there is cover image, we use it to generate thumbnail by scaling
@@ -658,14 +664,13 @@ void EbookController::CreateThumbnail(SizeI size, const onBitmapRenderedCb& save
     RenderedBitmap* bmp = ThumbFromCoverPage(doc, size);
     if (!bmp) {
         // no cover image so generate thumbnail from first page
-        SizeI pageSize(size.dx * 3, size.dy * 3);
+        Size pageSize(size.dx * 3, size.dy * 3);
         bmp = RenderFirstDocPageToBitmap(doc, pageSize, size, 10);
     }
     saveThumbnail(bmp);
 }
 
-void EbookController::SetDisplayMode(DisplayMode mode, bool keepContinuous) {
-    UNUSED(keepContinuous);
+void EbookController::SetDisplayMode(DisplayMode mode, [[maybe_unused]] bool keepContinuous) {
     bool newDouble = !IsSingle(mode);
     if (IsDoublePage() == newDouble) {
         return;
@@ -688,10 +693,10 @@ void EbookController::ExtractPageAnchors() {
     pageAnchorIds = new WStrVec();
     pageAnchorIdxs = new Vec<int>();
 
-    AutoFreeW epubPagePath;
+    AutoFreeWstr epubPagePath;
     int fb2TitleCount = 0;
     auto data = doc.GetHtmlData();
-    HtmlPullParser parser(data.data(), data.size());
+    HtmlPullParser parser(data);
     HtmlToken* tok;
     while ((tok = parser.Next()) != nullptr && !tok->IsError()) {
         if (!tok->IsStartTag() && !tok->IsEmptyElementEndTag()) {
@@ -702,21 +707,21 @@ void EbookController::ExtractPageAnchors() {
             attr = tok->GetAttrByName("name");
         }
         if (attr) {
-            AutoFreeW id(str::conv::FromUtf8(attr->val, attr->valLen));
-            pageAnchorIds->Append(str::Format(L"%s#%s", epubPagePath ? epubPagePath : L"", id.Get()));
+            AutoFreeWstr id = strconv::Utf8ToWstr({attr->val, attr->valLen});
+            pageAnchorIds->Append(str::Format(L"%s#%s", epubPagePath ? epubPagePath.Get() : L"", id.Get()));
             pageAnchorIdxs->Append((int)(tok->GetReparsePoint() - parser.Start()));
         }
         // update EPUB page paths and create an anchor per chapter
         if (Tag_Pagebreak == tok->tag && (attr = tok->GetAttrByName("page_path")) != nullptr &&
             str::StartsWith(attr->val + attr->valLen, "\" page_marker />")) {
             CrashIf(doc.Type() != DocType::Epub);
-            epubPagePath.Set(str::conv::FromUtf8(attr->val, attr->valLen));
+            epubPagePath.Set(strconv::Utf8ToWstr({attr->val, attr->valLen}));
             pageAnchorIds->Append(str::Dup(epubPagePath));
             pageAnchorIdxs->Append((int)(tok->GetReparsePoint() - parser.Start()));
         }
         // create FB2 title anchors (cf. Fb2Doc::ParseToc)
         if (Tag_Title == tok->tag && tok->IsStartTag() && DocType::Fb2 == doc.Type()) {
-            AutoFreeW id(str::Format(TEXT(FB2_TOC_ENTRY_MARK) L"%d", ++fb2TitleCount));
+            AutoFreeWstr id(str::Format(TEXT(FB2_TOC_ENTRY_MARK) L"%d", ++fb2TitleCount));
             pageAnchorIds->Append(id.StealData());
             pageAnchorIdxs->Append((int)(tok->GetReparsePoint() - parser.Start()));
         }
@@ -754,7 +759,7 @@ int EbookController::ResolvePageAnchor(const WCHAR* id) {
         return -1;
     }
 
-    AutoFreeW chapterPath(str::DupN(id, str::FindChar(id, '#') - id));
+    AutoFreeWstr chapterPath(str::DupN(id, str::FindChar(id, '#') - id));
     idx = pageAnchorIds->Find(chapterPath);
     if (idx != -1) {
         return pageAnchorIdxs->at(idx);
@@ -763,67 +768,81 @@ int EbookController::ResolvePageAnchor(const WCHAR* id) {
 }
 
 class EbookTocCollector : public EbookTocVisitor {
-    EbookController* ctrl;
-    EbookTocDest* root;
-    int idCounter;
+    EbookController* ctrl = nullptr;
+    TocItem* root = nullptr;
+    int idCounter = 0;
 
   public:
-    explicit EbookTocCollector(EbookController* ctrl) : ctrl(ctrl), root(nullptr), idCounter(0) {}
+    explicit EbookTocCollector(EbookController* ctrl) {
+        this->ctrl = ctrl;
+    }
 
-    virtual void Visit(const WCHAR* name, const WCHAR* url, int level) {
-        EbookTocDest* item = nullptr;
-        if (!url)
-            item = new EbookTocDest(name, 0);
-        else if (url::IsAbsolute(url))
-            item = new EbookTocDest(name, url);
-        else {
+    void Visit(const WCHAR* name, const WCHAR* url, int level) override {
+        TocItem* item = nullptr;
+        // TODO: set parent for newEbookTocDest()
+        if (!url) {
+            item = newEbookTocDest(nullptr, name, 0);
+        } else if (url::IsAbsolute(url)) {
+            item = newEbookTocDest(nullptr, name, url);
+        } else {
             int idx = ctrl->ResolvePageAnchor(url);
             if (-1 == idx && str::FindChar(url, '%')) {
-                AutoFreeW decodedUrl(str::Dup(url));
+                AutoFreeWstr decodedUrl(str::Dup(url));
                 url::DecodeInPlace(decodedUrl);
                 idx = ctrl->ResolvePageAnchor(decodedUrl);
             }
-            item = new EbookTocDest(name, idx + 1);
+            item = newEbookTocDest(nullptr, name, idx + 1);
         }
         item->id = ++idCounter;
         // find the last child at each level, until finding the parent of the new item
         if (!root) {
             root = item;
         } else {
-            DocTocItem* r2 = root;
+            TocItem* r2 = root;
             for (level--; level > 0; level--) {
-                for (; r2->next; r2 = r2->next)
-                    ;
-                if (!r2->child)
+                for (; r2->next; r2 = r2->next) {
+                    // no-op
+                }
+                if (!r2->child) {
                     break;
+                }
                 r2 = r2->child;
             }
-            if (level <= 0)
-                r2->AddSibling(item);
-            else
+            if (level <= 0) {
+                r2->AddSiblingAtEnd(item);
+            } else {
                 r2->child = item;
+            }
         }
     }
 
-    EbookTocDest* GetRoot() { return root; }
+    TocItem* GetRoot() {
+        return root;
+    }
 };
 
-DocTocItem* EbookController::GetTocTree() {
+TocTree* EbookController::GetToc() {
+    if (tocTree) {
+        return tocTree;
+    }
     EbookTocCollector visitor(this);
     doc.ParseToc(&visitor);
-    EbookTocDest* root = visitor.GetRoot();
-    if (root)
-        root->OpenSingleNode();
-    return root;
+    TocItem* root = visitor.GetRoot();
+    if (!root) {
+        return nullptr;
+    }
+    tocTree = new TocTree(root);
+    return tocTree;
 }
 
 void EbookController::ScrollToLink(PageDestination* dest) {
-    int reparseIdx = dest->GetDestPageNo() - 1;
+    int reparseIdx = dest->GetPageNo() - 1;
     int pageNo = PageForReparsePoint(pages, reparseIdx);
-    if (pageNo > 0)
+    if (pageNo > 0) {
         GoToPage(pageNo, true);
-    else if (0 == pageNo)
+    } else if (0 == pageNo) {
         GoToLastPage();
+    }
 }
 
 PageDestination* EbookController::GetNamedDest(const WCHAR* name) {
@@ -833,7 +852,7 @@ PageDestination* EbookController::GetNamedDest(const WCHAR* name) {
         (size_t)reparseIdx <= d.size()) {
         // Mobi uses filepos (reparseIdx) for in-document links
     } else if (!str::FindChar(name, '#')) {
-        AutoFreeW id(str::Format(L"#%s", name));
+        AutoFreeWstr id(str::Format(L"#%s", name));
         reparseIdx = ResolvePageAnchor(id);
     } else {
         reparseIdx = ResolvePageAnchor(name);
@@ -842,14 +861,18 @@ PageDestination* EbookController::GetNamedDest(const WCHAR* name) {
         return nullptr;
     }
     CrashIf((size_t)reparseIdx > d.size());
-    return new EbookTocDest(nullptr, reparseIdx + 1);
+    auto toc = newEbookTocDest(nullptr, nullptr, reparseIdx + 1);
+    auto res = toc->GetPageDestination();
+    toc->dest = nullptr;
+    delete toc;
+    return res;
 }
 
 int EbookController::CurrentTocPageNo() const {
     return currPageReparseIdx + 1;
 }
 
-void EbookController::UpdateDisplayState(DisplayState* ds) {
+void EbookController::GetDisplayState(DisplayState* ds) {
     if (!ds->filePath || !str::EqI(ds->filePath, doc.GetFilePath())) {
         str::ReplacePtr(&ds->filePath, doc.GetFilePath());
     }
@@ -858,24 +881,23 @@ void EbookController::UpdateDisplayState(DisplayState* ds) {
 
     // don't modify any of the other DisplayState values
     // as long as they're not used, so that the same
-    // DisplayState settings can also be used for EbookEngine;
+    // DisplayState settings can also be used for EngineEbook;
     // we get reasonable defaults from DisplayState's constructor anyway
     ds->reparseIdx = currPageReparseIdx;
-    str::ReplacePtr(&ds->displayMode, prefs::conv::FromDisplayMode(GetDisplayMode()));
+    str::ReplacePtr(&ds->displayMode, DisplayModeToString(GetDisplayMode()));
 }
 
-void EbookController::SetViewPortSize(SizeI size) {
-    UNUSED(size);
+void EbookController::SetViewPortSize([[maybe_unused]] Size size) {
     // relayouting gets the size from the canvas hwnd
     ctrls->mainWnd->RequestLayout();
 }
 
-LRESULT EbookController::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam, bool& wasHandled) {
+LRESULT EbookController::HandleMessage(UINT msg, WPARAM wp, LPARAM lp, bool& wasHandled) {
     if (!handleMsgs) {
         wasHandled = false;
         return 0;
     }
-    return ctrls->mainWnd->evtMgr->OnMessage(msg, wParam, lParam, wasHandled);
+    return ctrls->mainWnd->evtMgr->OnMessage(msg, wp, lp, wasHandled);
 }
 
 // TODO: also needs to update for font name/size changes, but it's more complicated
@@ -952,7 +974,8 @@ void EbookController::CopyNavHistory(EbookController& orig) {
     navHistoryIdx = orig.navHistoryIdx;
 }
 
-EbookController* EbookController::Create(Doc doc, HWND hwnd, ControllerCallback* cb, FrameRateWnd* frameRateWnd) {
+EbookController* EbookController::Create(const Doc& doc, HWND hwnd, ControllerCallback* cb,
+                                         FrameRateWnd* frameRateWnd) {
     EbookControls* ctrls = CreateEbookControls(hwnd, frameRateWnd);
     if (!ctrls) {
         return nullptr;

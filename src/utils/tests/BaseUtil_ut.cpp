@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
@@ -7,23 +7,20 @@
 #include "utils/UtAssert.h"
 
 static void GeomTest() {
-    PointD ptD(12.4, -13.6);
-    utassert(ptD.x == 12.4 && ptD.y == -13.6);
-    PointI ptI = ptD.ToInt();
-    utassert(ptI.x == 12 && ptI.y == -14);
-    ptD = ptI.Convert<double>();
-    utassert(PointD(12, -14) == ptD);
-    utassert(PointD(12.4, -13.6) != ptD);
+    PointF ptD(12.4f, -13.6f);
+    utassert(ptD.x == 12.4f && ptD.y == -13.6f);
+    Point ptI = ToPoint(ptD);
+    utassert(ptI.x == 12 && ptI.y == -13);
 
-    SizeD szD(7.7, -3.3);
-    utassert(szD.dx == 7.7 && szD.dy == -3.3);
-    SizeI szI = szD.ToInt();
+    SizeF szD(7.7f, -3.3f);
+    utassert(szD.dx == 7.7f && szD.dy == -3.3f);
+    Size szI = ToSize(szD);
     utassert(szI.dx == 8 && szI.dy == -3);
-    szD = szI.Convert<double>();
-    utassert(SizeD(8, -3) == szD);
+    szD = ToSizeFl(szI);
+    utassert(SizeF(8, -3) == szD);
 
     utassert(!szD.IsEmpty() && !szI.IsEmpty());
-    utassert(SizeI().IsEmpty() && SizeD().IsEmpty());
+    utassert(Size().IsEmpty() && SizeF().IsEmpty());
 
     struct SRIData {
         int x1s, x1e, y1s, y1e;
@@ -43,9 +40,9 @@ static void GeomTest() {
     for (size_t i = 0; i < dimof(testData); i++) {
         struct SRIData* curr = &testData[i];
 
-        RectI rx1(curr->x1s, curr->y1s, curr->x1e - curr->x1s, curr->y1e - curr->y1s);
-        RectI rx2 = RectI::FromXY(curr->x2s, curr->y2s, curr->x2e, curr->y2e);
-        RectI isect = rx1.Intersect(rx2);
+        Rect rx1(curr->x1s, curr->y1s, curr->x1e - curr->x1s, curr->y1e - curr->y1s);
+        Rect rx2 = Rect::FromXY(curr->x2s, curr->y2s, curr->x2e, curr->y2e);
+        Rect isect = rx1.Intersect(rx2);
         if (curr->intersect) {
             utassert(!isect.IsEmpty());
             utassert(isect.x == curr->i_xs && isect.y == curr->i_ys);
@@ -53,7 +50,7 @@ static void GeomTest() {
         } else {
             utassert(isect.IsEmpty());
         }
-        RectI urect = rx1.Union(rx2);
+        Rect urect = rx1.Union(rx2);
         utassert(urect.x == curr->u_xs && urect.y == curr->u_ys);
         utassert(urect.x + urect.dx == curr->u_xe && urect.y + urect.dy == curr->u_ye);
 
@@ -68,16 +65,68 @@ static void GeomTest() {
             utassert(isect.IsEmpty());
         }
         urect = rx1.Union(rx2);
-        utassert(RectI::FromXY(curr->u_xs, curr->u_ys, curr->u_xe, curr->u_ye) == urect);
+        utassert(Rect::FromXY(curr->u_xs, curr->u_ys, curr->u_xe, curr->u_ye) == urect);
 
-        utassert(!rx1.Contains(PointI(-2, -2)));
+        utassert(!rx1.Contains(Point(-2, -2)));
         utassert(rx1.Contains(rx1.TL()));
-        utassert(!rx1.Contains(PointI(rx1.x, INT_MAX)));
-        utassert(!rx1.Contains(PointI(INT_MIN, rx1.y)));
+        utassert(!rx1.Contains(Point(rx1.x, INT_MAX)));
+        utassert(!rx1.Contains(Point(INT_MIN, rx1.y)));
     }
 }
 
+static const char* strings[] = {"s1", "string", "another one", "and one more"};
+
+static void PoolAllocatorStringsTest(PoolAllocator& a, int nRounds) {
+    a.Reset();
+
+    int nStrings = (int)dimof(strings);
+    for (int i = 0; i < nRounds; i++) {
+        for (int j = 0; j < nStrings; j++) {
+            const char* s = strings[j];
+            std::string_view sv = s;
+            std::string_view got = Allocator::AllocString(&a, sv);
+            utassert(str::Eq(sv, got.data()));
+        }
+    }
+
+    int nTotal = nStrings * nRounds;
+    int nString = 0;
+    for (int i = 0; i < nTotal; i++) {
+        const char* exp = strings[nString];
+        nString = (nString + 1) % nStrings;
+
+        void* d = a.At(i);
+        char* got = (char*)d;
+        utassert(str::Eq(exp, got));
+    }
+}
+
+static void PoolAllocatorTest() {
+    PoolAllocator a;
+    PoolAllocatorStringsTest(a, 2048);
+    a.allocAlign = 1;
+    PoolAllocatorStringsTest(a, 2048);
+}
+
+static int roundUpTestCases[] = {
+    0, 0, 1, 8, 2, 8, 3, 8, 4, 8, 5, 8, 6, 8, 7, 8, 8, 8, 9, 16,
+};
+
 void BaseUtilTest() {
+    PoolAllocatorTest();
+
+    size_t n = dimof(roundUpTestCases) / 2;
+    for (size_t i = 0; i < n; i++) {
+        int v = roundUpTestCases[i * 2];
+        int exp = roundUpTestCases[i * 2 + 1];
+        int got = RoundUp(v, 8);
+        utassert(exp == got);
+        size_t got2 = RoundUp((size_t)v, (size_t)8);
+        utassert(got2 == (size_t)exp);
+        char* got3 = RoundUp((char*)(uintptr_t)v, (int)8);
+        utassert(got3 == (char*)(uintptr_t)exp);
+    }
+
     utassert(RoundToPowerOf2(0) == 1);
     utassert(RoundToPowerOf2(1) == 1);
     utassert(RoundToPowerOf2(2) == 2);

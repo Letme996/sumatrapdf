@@ -1,27 +1,22 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
 #include "utils/Timer.h"
 #include "utils/WinUtil.h"
 #include "utils/HtmlParserLookup.h"
+#include "utils/Log.h"
+#include "utils/GdiPlusUtil.h"
+
 #include "Mui.h"
 #include "wingui/FrameRateWnd.h"
-//#define NOLOG 0
-#include "utils/DebugLog.h"
 
 namespace mui {
 
-HwndWrapper::HwndWrapper(HWND hwnd)
-    : painter(nullptr),
-      evtMgr(nullptr),
-      layoutRequested(false),
-      firstLayout(true),
-      sizeToFit(false),
-      centerContent(false),
-      markedForRepaint(false) {
-    if (hwnd)
+HwndWrapper::HwndWrapper(HWND hwnd) {
+    if (hwnd) {
         SetHwnd(hwnd);
+    }
 }
 
 HwndWrapper::~HwndWrapper() {
@@ -82,7 +77,7 @@ void HwndWrapper::Arrange(const Rect finalRect) {
 // of WM_SIZE) or when the content of the window changes
 void HwndWrapper::TopLevelLayout() {
     CrashIf(!hwndParent);
-    ClientRect rc(hwndParent);
+    Rect rc = ClientRect(hwndParent);
     Size availableSize(rc.dx, rc.dy);
     // lf("(%3d,%3d) HwndWrapper::TopLevelLayout()", rc.dx, rc.dy);
     Size s = Measure(availableSize);
@@ -90,24 +85,24 @@ void HwndWrapper::TopLevelLayout() {
     if (firstLayout && sizeToFit) {
         firstLayout = false;
         desiredSize = s;
-        ResizeHwndToClientArea(hwndParent, s.Width, s.Height, false);
+        ResizeHwndToClientArea(hwndParent, s.dx, s.dy, false);
         layoutRequested = false;
         return;
     }
 
     desiredSize = availableSize;
-    Rect r(0, 0, availableSize.Width, availableSize.Height);
+    Rect r(0, 0, availableSize.dx, availableSize.dy);
     SetPosition(r);
     if (centerContent) {
-        int n = availableSize.Width - s.Width;
+        int n = availableSize.dx - s.dx;
         if (n > 0) {
-            r.X = n / 2;
-            r.Width = s.Width;
+            r.x = n / 2;
+            r.dx = s.dx;
         }
-        n = availableSize.Height - s.Height;
+        n = availableSize.dy - s.dy;
         if (n > 0) {
-            r.Y = n / 2;
-            r.Height = s.Height;
+            r.y = n / 2;
+            r.dy = s.dy;
         }
     }
     Arrange(r);
@@ -131,10 +126,11 @@ void HwndWrapper::LayoutIfRequested() {
 
 void HwndWrapper::OnPaint(HWND hwnd) {
     CrashIf(hwnd != hwndParent);
-    Timer t;
+    auto t = TimeGet();
     painter->Paint(hwnd, markedForRepaint);
     if (frameRateWnd) {
-        frameRateWnd->ShowFrameRateDur(t.GetTimeInMs());
+        auto dur = TimeSinceInMs(t);
+        frameRateWnd->ShowFrameRateDur(dur);
     }
     markedForRepaint = false;
 }

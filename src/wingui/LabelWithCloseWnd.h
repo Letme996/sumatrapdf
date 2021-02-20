@@ -1,8 +1,7 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
-class LabelWithCloseWnd {
-  public:
+struct LabelWithCloseWnd {
     LabelWithCloseWnd() = default;
     ~LabelWithCloseWnd() = default;
 
@@ -12,16 +11,35 @@ class LabelWithCloseWnd {
     void SetBgCol(COLORREF);
     void SetTextCol(COLORREF);
     void SetPaddingXY(int x, int y);
-    SizeI GetIdealSize();
+    Size GetIdealSize();
 
-    HWND hwnd;
-    HFONT font;
-    int cmd;
+    HWND hwnd = 0;
+    HFONT font = 0;
+    int cmd = 0;
 
-    RectI closeBtnPos;
-    COLORREF txtCol;
-    COLORREF bgCol;
+    Rect closeBtnPos = {};
+    COLORREF txtCol = 0;
+    COLORREF bgCol = 0;
 
     // in points
-    int padX, padY;
+    int padX = 0;
+    int padY = 0;
+};
+
+struct LabelWithCloseCtrl : public Window {
+    LabelWithCloseCtrl(HWND);
+    ~LabelWithCloseCtrl() override;
+
+    bool Create(const WCHAR*);
+
+    void SetLabel(const WCHAR*);
+
+    void SetPaddingXY(int x, int y);
+    Size GetIdealSize() override;
+
+    Rect closeBtnPos = {};
+
+    // in points
+    int padX = 0;
+    int padY = 0;
 };

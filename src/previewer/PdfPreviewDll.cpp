@@ -1,90 +1,144 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
 #include "utils/FileUtil.h"
 #include "utils/WinUtil.h"
+#include "utils/LogDbg.h"
 
-#include "BaseEngine.h"
+#include "wingui/TreeModel.h"
+
+#include "Annotation.h"
+#include "EngineBase.h"
 #include "PdfPreview.h"
 #include "PdfPreviewBase.h"
 
 long g_lRefCount = 0;
 
+#ifdef BUILD_XPS_PREVIEW
+static bool gBuildXpsPreview = true;
+#else
+static bool gBuildXpsPreview = false;
+#endif
+
+#ifdef BUILD_DJVU_PREVIEW
+static bool gBuildDjVuPreview = true;
+#else
+static bool gBuildDjVuPreview = false;
+#endif
+
+#ifdef BUILD_EPUB_PREVIEW
+static bool gBuildEpubPreview = true;
+#else
+static bool gBuildEpubPreview = false;
+#endif
+
+#ifdef BUILD_FB2_PREVIEW
+static bool gBuildFb2Preview = true;
+#else
+static bool gBuildFb2Preview = false;
+#endif
+
+#ifdef BUILD_MOBI_PREVIEW
+static bool gBuildMobiPreview = true;
+#else
+static bool gBuildMobiPreview = false;
+#endif
+
+#if defined(BUILD_CBZ_PREVIEW) || defined(BUILD_CBR_PREVIEW) || defined(BUILD_CB7_PREVIEW) || defined(BUILD_CBT_PREVIEW)
+static bool gBuildCbxPreview = true;
+#else
+static bool gBuildCbxPreview = false;
+#endif
+
+#ifdef BUILD_TGA_PREVIEW
+static bool gBuildTgaPreview = true;
+#else
+static bool gBuildTgaPreview = false;
+#endif
+
 class CClassFactory : public IClassFactory {
   public:
-    CClassFactory(REFCLSID rclsid) : m_lRef(1), m_clsid(rclsid) { InterlockedIncrement(&g_lRefCount); }
+    CClassFactory(REFCLSID rclsid) : m_lRef(1), m_clsid(rclsid) {
+        InterlockedIncrement(&g_lRefCount);
+    }
 
-    ~CClassFactory() { InterlockedDecrement(&g_lRefCount); }
+    ~CClassFactory() {
+        InterlockedDecrement(&g_lRefCount);
+    }
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) {
+        dbglog("PdfPreview: QueryInterface()\n");
         static const QITAB qit[] = {QITABENT(CClassFactory, IClassFactory), {0}};
         return QISearch(this, qit, riid, ppv);
     }
 
-    IFACEMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&m_lRef); }
+    IFACEMETHODIMP_(ULONG) AddRef() {
+        return InterlockedIncrement(&m_lRef);
+    }
 
     IFACEMETHODIMP_(ULONG) Release() {
         long cRef = InterlockedDecrement(&m_lRef);
-        if (cRef == 0)
+        if (cRef == 0) {
             delete this;
+        }
         return cRef;
     }
 
     // IClassFactory
     IFACEMETHODIMP CreateInstance(IUnknown* punkOuter, REFIID riid, void** ppv) {
+        dbglog("PdfPreview: CreateInstance()\n");
+
         *ppv = nullptr;
-        if (punkOuter)
+        if (punkOuter) {
             return CLASS_E_NOAGGREGATION;
+        }
 
         ScopedComPtr<IInitializeWithStream> pObject;
 
         CLSID clsid;
-        if (SUCCEEDED(CLSIDFromString(SZ_PDF_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        if (SUCCEEDED(CLSIDFromString(SZ_PDF_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CPdfPreview(&g_lRefCount);
-#ifdef BUILD_XPS_PREVIEW
-        else if (SUCCEEDED(CLSIDFromString(SZ_XPS_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildXpsPreview && SUCCEEDED(CLSIDFromString(SZ_XPS_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CXpsPreview(&g_lRefCount);
-#endif
-#ifdef BUILD_DJVU_PREVIEW
-        else if (SUCCEEDED(CLSIDFromString(SZ_DJVU_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildDjVuPreview && SUCCEEDED(CLSIDFromString(SZ_DJVU_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CDjVuPreview(&g_lRefCount);
-#endif
-#ifdef BUILD_EPUB_PREVIEW
-        else if (SUCCEEDED(CLSIDFromString(SZ_EPUB_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildEpubPreview && SUCCEEDED(CLSIDFromString(SZ_EPUB_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CEpubPreview(&g_lRefCount);
-#endif
-#ifdef BUILD_FB2_PREVIEW
-        else if (SUCCEEDED(CLSIDFromString(SZ_FB2_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildFb2Preview && SUCCEEDED(CLSIDFromString(SZ_FB2_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CFb2Preview(&g_lRefCount);
-#endif
-#ifdef BUILD_MOBI_PREVIEW
-        else if (SUCCEEDED(CLSIDFromString(SZ_MOBI_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildMobiPreview && SUCCEEDED(CLSIDFromString(SZ_MOBI_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CMobiPreview(&g_lRefCount);
-#endif
-#if defined(BUILD_CBZ_PREVIEW) || defined(BUILD_CBR_PREVIEW) || defined(BUILD_CB7_PREVIEW) || defined(BUILD_CBT_PREVIEW)
-        else if (SUCCEEDED(CLSIDFromString(SZ_CBX_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildCbxPreview && SUCCEEDED(CLSIDFromString(SZ_CBX_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CCbxPreview(&g_lRefCount);
-#endif
-#ifdef BUILD_TGA_PREVIEW
-        else if (SUCCEEDED(CLSIDFromString(SZ_TGA_PREVIEW_CLSID, &clsid)) && IsEqualCLSID(m_clsid, clsid))
+        } else if (gBuildTgaPreview && SUCCEEDED(CLSIDFromString(SZ_TGA_PREVIEW_CLSID, &clsid)) &&
+                   IsEqualCLSID(m_clsid, clsid)) {
             pObject = new CTgaPreview(&g_lRefCount);
-#endif
-        else
+        } else {
             return E_NOINTERFACE;
-        if (!pObject)
+        }
+
+        if (!pObject) {
             return E_OUTOFMEMORY;
+        }
 
         return pObject->QueryInterface(riid, ppv);
     }
 
     IFACEMETHODIMP LockServer(BOOL bLock) {
-        if (bLock)
+        if (bLock) {
             InterlockedIncrement(&g_lRefCount);
-        else
+        } else {
             InterlockedDecrement(&g_lRefCount);
+        }
         return S_OK;
     }
 
@@ -93,12 +147,25 @@ class CClassFactory : public IClassFactory {
     CLSID m_clsid;
 };
 
-STDAPI_(BOOL) DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID lpReserved) {
-    UNUSED(lpReserved);
+static const char* GetReason(DWORD dwReason) {
+    switch (dwReason) {
+        case DLL_PROCESS_ATTACH:
+            return "DLL_PROCESS_ATTACH";
+        case DLL_THREAD_ATTACH:
+            return "DLL_THREAD_ATTACH";
+        case DLL_THREAD_DETACH:
+            return "DLL_THREAD_DETACH";
+        case DLL_PROCESS_DETACH:
+            return "DLL_PROCESS_DETACH";
+    }
+    return "Unknown reason";
+}
+
+STDAPI_(BOOL) DllMain(HINSTANCE hInstance, DWORD dwReason, [[maybe_unused]] LPVOID lpReserved) {
     if (dwReason == DLL_PROCESS_ATTACH) {
         CrashIf(hInstance != GetInstance());
     }
-
+    dbglogf("PdfPreview: DllMain %s\n", GetReason(dwReason));
     return TRUE;
 }
 
@@ -115,8 +182,10 @@ STDAPI DllCanUnloadNow(VOID) {
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv) {
     *ppv = nullptr;
     ScopedComPtr<CClassFactory> pClassFactory(new CClassFactory(rclsid));
-    if (!pClassFactory)
+    if (!pClassFactory) {
         return E_OUTOFMEMORY;
+    }
+    dbglog("PdfPreview: DllGetClassObject\n");
     return pClassFactory->QueryInterface(riid, ppv);
 }
 
@@ -169,9 +238,11 @@ static struct {
 };
 
 STDAPI DllRegisterServer() {
-    AutoFreeW dllPath(path::GetPathOfFileInAppDir());
-    if (!dllPath)
+    dbglog("PdfPreview: DllRegisterServer\n");
+    AutoFreeWstr dllPath = path::GetPathOfFileInAppDir();
+    if (!dllPath) {
         return HRESULT_FROM_WIN32(GetLastError());
+    }
 
 #define WriteOrFail_(key, value, data)                     \
     WriteRegStr(HKEY_LOCAL_MACHINE, key, value, data);     \
@@ -179,43 +250,48 @@ STDAPI DllRegisterServer() {
     return E_FAIL
 
     for (int i = 0; i < dimof(gPreviewers); i++) {
-        if (gPreviewers[i].skip)
+        if (gPreviewers[i].skip) {
             continue;
-        AutoFreeW displayName(str::Format(L"SumatraPDF Preview (*%s)", gPreviewers[i].ext));
+        }
+        const WCHAR* clsid = gPreviewers[i].clsid;
+        const WCHAR* ext = gPreviewers[i].ext;
+        const WCHAR* ext2 = gPreviewers[i].ext2;
+
+        AutoFreeWstr displayName = str::Format(L"SumatraPDF Preview (*%s)", ext);
         // register class
-        AutoFreeW key(str::Format(L"Software\\Classes\\CLSID\\%s", gPreviewers[i].clsid));
+        AutoFreeWstr key = str::Format(L"Software\\Classes\\CLSID\\%s", clsid);
         WriteOrFail_(key, nullptr, displayName);
         WriteOrFail_(key, L"AppId", IsRunningInWow64() ? APPID_PREVHOST_EXE_WOW64 : APPID_PREVHOST_EXE);
         WriteOrFail_(key, L"DisplayName", displayName);
-        key.Set(str::Format(L"Software\\Classes\\CLSID\\%s\\InProcServer32", gPreviewers[i].clsid));
+        key.Set(str::Format(L"Software\\Classes\\CLSID\\%s\\InProcServer32", clsid));
         WriteOrFail_(key, nullptr, dllPath);
         WriteOrFail_(key, L"ThreadingModel", L"Apartment");
         // IThumbnailProvider
-        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, gPreviewers[i].ext));
-        WriteOrFail_(key, nullptr, gPreviewers[i].clsid);
-        if (gPreviewers[i].ext2) {
-            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, gPreviewers[i].ext2));
-            WriteOrFail_(key, nullptr, gPreviewers[i].clsid);
+        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, ext));
+        WriteOrFail_(key, nullptr, clsid);
+        if (ext2) {
+            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, ext2));
+            WriteOrFail_(key, nullptr, clsid);
         }
         // IExtractImage (for Windows XP)
         if (!IsVistaOrGreater()) {
             // don't register for IExtractImage on systems which accept IThumbnailProvider
             // (because it doesn't offer anything beyond what IThumbnailProvider does)
-            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, gPreviewers[i].ext));
-            WriteOrFail_(key, nullptr, gPreviewers[i].clsid);
-            if (gPreviewers[i].ext2) {
-                key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, gPreviewers[i].ext2));
-                WriteOrFail_(key, nullptr, gPreviewers[i].clsid);
+            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, ext));
+            WriteOrFail_(key, nullptr, clsid);
+            if (ext2) {
+                key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, ext2));
+                WriteOrFail_(key, nullptr, clsid);
             }
         }
         // IPreviewHandler
-        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, gPreviewers[i].ext));
-        WriteOrFail_(key, nullptr, gPreviewers[i].clsid);
-        if (gPreviewers[i].ext2) {
-            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, gPreviewers[i].ext2));
-            WriteOrFail_(key, nullptr, gPreviewers[i].clsid);
+        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, ext));
+        WriteOrFail_(key, nullptr, clsid);
+        if (ext2) {
+            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, ext2));
+            WriteOrFail_(key, nullptr, clsid);
         }
-        WriteOrFail_(REG_KEY_PREVIEW_HANDLERS, gPreviewers[i].clsid, displayName);
+        WriteOrFail_(REG_KEY_PREVIEW_HANDLERS, clsid, displayName);
     }
 #undef WriteOrFail_
 
@@ -223,6 +299,7 @@ STDAPI DllRegisterServer() {
 }
 
 STDAPI DllUnregisterServer() {
+    dbglog("PdfPreview: DllUnregisterServer\n");
     HRESULT hr = S_OK;
 
 #define DeleteOrFail_(key)                     \
@@ -231,33 +308,38 @@ STDAPI DllUnregisterServer() {
     hr = E_FAIL
 
     for (int i = 0; i < dimof(gPreviewers); i++) {
-        if (gPreviewers[i].skip)
+        if (gPreviewers[i].skip) {
             continue;
+        }
+        const WCHAR* clsid = gPreviewers[i].clsid;
+        const WCHAR* ext = gPreviewers[i].ext;
+        const WCHAR* ext2 = gPreviewers[i].ext2;
+
         // unregister preview handler
-        SHDeleteValue(HKEY_LOCAL_MACHINE, REG_KEY_PREVIEW_HANDLERS, gPreviewers[i].clsid);
-        SHDeleteValue(HKEY_CURRENT_USER, REG_KEY_PREVIEW_HANDLERS, gPreviewers[i].clsid);
+        SHDeleteValue(HKEY_LOCAL_MACHINE, REG_KEY_PREVIEW_HANDLERS, clsid);
+        SHDeleteValue(HKEY_CURRENT_USER, REG_KEY_PREVIEW_HANDLERS, clsid);
         // remove class data
-        AutoFreeW key(str::Format(L"Software\\Classes\\CLSID\\%s", gPreviewers[i].clsid));
+        AutoFreeWstr key(str::Format(L"Software\\Classes\\CLSID\\%s", clsid));
         DeleteOrFail_(key);
         // IThumbnailProvider
-        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, gPreviewers[i].ext));
+        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, ext));
         DeleteOrFail_(key);
-        if (gPreviewers[i].ext2) {
-            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, gPreviewers[i].ext2));
+        if (ext2) {
+            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_THUMBNAIL_PROVIDER, ext2));
             DeleteOrFail_(key);
         }
         // IExtractImage (for Windows XP)
-        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, gPreviewers[i].ext));
+        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, ext));
         DeleteOrFail_(key);
-        if (gPreviewers[i].ext2) {
-            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, gPreviewers[i].ext2));
+        if (ext2) {
+            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_EXTRACT_IMAGE, ext2));
             DeleteOrFail_(key);
         }
         // IPreviewHandler
-        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, gPreviewers[i].ext));
+        key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, ext));
         DeleteOrFail_(key);
-        if (gPreviewers[i].ext2) {
-            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, gPreviewers[i].ext2));
+        if (ext2) {
+            key.Set(str::Format(L"Software\\Classes\\%s\\shellex\\" CLSID_I_PREVIEW_HANDLER, ext2));
             DeleteOrFail_(key);
         }
     }
@@ -269,7 +351,7 @@ STDAPI DllUnregisterServer() {
 STDAPI DllInstall(BOOL bInstall, LPCWSTR pszCmdLine) {
     // allows installing only a subset of available preview handlers
     if (str::StartsWithI(pszCmdLine, L"exts:")) {
-        AutoFreeW extsList(str::Dup(pszCmdLine + 5));
+        AutoFreeWstr extsList(str::Dup(pszCmdLine + 5));
         str::ToLowerInPlace(extsList);
         str::TransChars(extsList, L";. :", L",,,\0");
         WStrVec exts;
@@ -279,8 +361,9 @@ STDAPI DllInstall(BOOL bInstall, LPCWSTR pszCmdLine) {
         }
     }
 
-    if (!bInstall)
+    if (!bInstall) {
         return DllUnregisterServer();
+    }
     return DllRegisterServer();
 }
 

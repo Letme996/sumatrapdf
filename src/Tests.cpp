@@ -1,21 +1,27 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
 #include "utils/WinUtil.h"
+#include "DisplayMode.h"
 #include "SettingsStructs.h"
 #include "GlobalPrefs.h"
-#include "ParseCommandLine.h"
-#include "BaseEngine.h"
-#include "EngineManager.h"
+#include "Flags.h"
 
-extern "C" void fz_redirect_dll_io_to_console();
+#include "wingui/TreeModel.h"
 
-void TestRenderPage(const CommandLineInfo& i) {
+#include "Annotation.h"
+#include "EngineBase.h"
+#include "EngineCreate.h"
+
+// TODO(port)
+// extern "C" void fz_redirect_dll_io_to_console();
+
+void TestRenderPage(const Flags& i) {
     if (i.showConsole) {
         RedirectIOToConsole();
-        fz_redirect_dll_io_to_console();
+        // fz_redirect_dll_io_to_console();
     }
 
     if (i.pageNumber == -1) {
@@ -32,14 +38,15 @@ void TestRenderPage(const CommandLineInfo& i) {
         zoom = i.startZoom;
     }
     for (auto fileName : files) {
-        OwnedData fileNameUtf(str::conv::ToUtf8(fileName));
+        AutoFree fileNameUtf(strconv::WstrToUtf8(fileName));
         printf("rendering page %d for '%s', zoom: %.2f\n", i.pageNumber, fileNameUtf.Get(), zoom);
-        auto engine = EngineManager::CreateEngine(fileName);
+        auto engine = CreateEngine(fileName);
         if (engine == nullptr) {
             printf("failed to create engine\n");
             continue;
         }
-        auto bmp = engine->RenderBitmap(i.pageNumber, zoom, 0);
+        RenderPageArgs args(i.pageNumber, zoom, 0);
+        auto bmp = engine->RenderPage(args);
         if (bmp == nullptr) {
             printf("failed to render page\n");
         }
@@ -48,42 +55,54 @@ void TestRenderPage(const CommandLineInfo& i) {
     }
 }
 
-void TestExtractPage(const CommandLineInfo& i) {
-    if (i.showConsole) {
-        RedirectIOToConsole();
-        fz_redirect_dll_io_to_console();
-    }
-
-    if (i.pageNumber == -1) {
-        printf("pageNumber is -1\n");
+static void extractPageText(EngineBase* engine, int pageNo) {
+    PageText pageText = engine->ExtractPageText(pageNo);
+    if (!pageText.text) {
         return;
     }
-    auto files = i.fileNames;
+    AutoFreeWstr uni = str::Replace(pageText.text, L"\n", L"_");
+    AutoFree utf = strconv::WstrToUtf8(uni);
+    printf("text on page %d: '", pageNo);
+    // print characters as hex because I don't know what kind of locale-specific mangling
+    // printf() might do
+    int idx = 0;
+    while (utf.Get()[idx] != 0) {
+        char c = utf.Get()[idx++];
+        printf("%02x ", (u8)c);
+    }
+    printf("'\n");
+    FreePageText(&pageText);
+}
+
+void TestExtractPage(const Flags& ci) {
+    if (ci.showConsole) {
+        RedirectIOToConsole();
+        // fz_redirect_dll_io_to_console();
+    }
+
+    int pageNo = ci.pageNumber;
+
+    auto files = ci.fileNames;
     if (files.size() == 0) {
         printf("no file provided\n");
         return;
     }
     for (auto fileName : files) {
-        OwnedData fileNameUtf(str::conv::ToUtf8(fileName));
-        auto engine = EngineManager::CreateEngine(fileName);
+        AutoFree fileNameUtf(strconv::WstrToUtf8(fileName));
+        auto engine = CreateEngine(fileName);
         if (engine == nullptr) {
             printf("failed to create engine for file '%s'\n", fileNameUtf.Get());
             continue;
         }
-        RectI* coordsOut; // not using the result, only to trigger the code path
-        WCHAR* uni = engine->ExtractPageText(i.pageNumber, L"_", &coordsOut);
-        OwnedData utf = str::conv::ToUtf8(uni);
-        printf("text on page %d: '", i.pageNumber);
-        // print characters as hex because I don't know what kind of locale-specific mangling
-        // printf() might do
-        int idx = 0;
-        while (utf.Get()[idx] != 0) {
-            char c = utf.Get()[idx++];
-            printf("%02x ", (unsigned char)c);
+        if (pageNo < 0) {
+            int nPages = engine->PageCount();
+            for (int i = 1; i <= nPages; i++) {
+                extractPageText(engine, i);
+            }
+        } else {
+            extractPageText(engine, pageNo);
         }
-        printf("'\n");
-        free(uni);
-        free(coordsOut);
+
         delete engine;
     }
 }

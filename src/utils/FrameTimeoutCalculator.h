@@ -1,4 +1,4 @@
-/* Copyright 2015 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 class FrameTimeoutCalculator {
@@ -39,5 +39,7 @@ class FrameTimeoutCalculator {
         }
     }
 
-    void Step() { timeLast.QuadPart += ticksPerFrame; }
+    void Step() {
+        timeLast.QuadPart += ticksPerFrame;
+    }
 };

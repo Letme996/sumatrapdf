@@ -1,12 +1,15 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
 #include "utils/WinUtil.h"
 
-#include "BaseEngine.h"
-#include "PdfEngine.h"
+#include "wingui/TreeModel.h"
+
+#include "Annotation.h"
+#include "EngineBase.h"
+#include "EnginePdf.h"
 
 #include "FilterBase.h"
 #include "PdfFilter.h"
@@ -23,24 +26,26 @@ VOID CPdfFilter::CleanUp() {
 HRESULT CPdfFilter::OnInit() {
     CleanUp();
 
-    // TODO: PdfEngine::CreateFromStream never returns with
+    // TODO: EnginePdf::CreateFromStream never returns with
     //       m_pStream instead of a clone - why?
 
     // load content of PDF document into a seekable stream
     HRESULT res;
-    size_t len;
-    void* data = GetDataFromStream(m_pStream, &len, &res);
-    if (!data)
+    AutoFree data = GetDataFromStream(m_pStream, &res);
+    if (data.empty()) {
         return res;
+    }
 
-    ScopedComPtr<IStream> stream(CreateStreamFromData(data, len));
-    free(data);
-    if (!stream)
+    auto strm = CreateStreamFromData(data.AsSpan());
+    ScopedComPtr<IStream> stream(strm);
+    if (!stream) {
         return E_FAIL;
+    }
 
-    m_pdfEngine = PdfEngine::CreateFromStream(stream);
-    if (!m_pdfEngine)
+    m_pdfEngine = CreateEnginePdfFromStream(stream);
+    if (!m_pdfEngine) {
         return E_FAIL;
+    }
 
     m_state = STATE_PDF_START;
     m_iPageNo = 0;
@@ -51,8 +56,9 @@ HRESULT CPdfFilter::OnInit() {
 static bool PdfDateParse(const WCHAR* pdfDate, SYSTEMTIME* timeOut) {
     ZeroMemory(timeOut, sizeof(SYSTEMTIME));
     // "D:" at the beginning is optional
-    if (str::StartsWith(pdfDate, L"D:"))
+    if (str::StartsWith(pdfDate, L"D:")) {
         pdfDate += 2;
+    }
     return str::Parse(pdfDate,
                       L"%4d%2d%2d"
                       L"%2d%2d%2d",
@@ -62,7 +68,7 @@ static bool PdfDateParse(const WCHAR* pdfDate, SYSTEMTIME* timeOut) {
 }
 
 HRESULT CPdfFilter::GetNextChunkValue(CChunkValue& chunkValue) {
-    AutoFreeW str;
+    AutoFreeWstr str;
 
     switch (m_state) {
         case STATE_PDF_START:
@@ -82,8 +88,9 @@ HRESULT CPdfFilter::GetNextChunkValue(CChunkValue& chunkValue) {
         case STATE_PDF_TITLE:
             m_state = STATE_PDF_DATE;
             str.Set(m_pdfEngine->GetProperty(DocumentProperty::Title));
-            if (!str)
+            if (!str) {
                 str.Set(m_pdfEngine->GetProperty(DocumentProperty::Subject));
+            }
             if (!str::IsEmpty(str.Get())) {
                 chunkValue.SetTextValue(PKEY_Title, str);
                 return S_OK;
@@ -93,8 +100,9 @@ HRESULT CPdfFilter::GetNextChunkValue(CChunkValue& chunkValue) {
         case STATE_PDF_DATE:
             m_state = STATE_PDF_CONTENT;
             str.Set(m_pdfEngine->GetProperty(DocumentProperty::ModificationDate));
-            if (!str)
+            if (!str) {
                 str.Set(m_pdfEngine->GetProperty(DocumentProperty::CreationDate));
+            }
             if (!str::IsEmpty(str.Get())) {
                 SYSTEMTIME systime;
                 FILETIME filetime;
@@ -107,10 +115,15 @@ HRESULT CPdfFilter::GetNextChunkValue(CChunkValue& chunkValue) {
 
         case STATE_PDF_CONTENT:
             while (++m_iPageNo <= m_pdfEngine->PageCount()) {
-                str.Set(m_pdfEngine->ExtractPageText(m_iPageNo, L"\r\n"));
-                if (str::IsEmpty(str.Get()))
+                PageText pageText = m_pdfEngine->ExtractPageText(m_iPageNo);
+                if (str::IsEmpty(pageText.text)) {
+                    FreePageText(&pageText);
                     continue;
-                chunkValue.SetTextValue(PKEY_Search_Contents, str, CHUNK_TEXT);
+                }
+                str.Set(pageText.text);
+                AutoFreeWstr str2 = str::Replace(str.Get(), L"\n", L"\r\n");
+                chunkValue.SetTextValue(PKEY_Search_Contents, str2.Get(), CHUNK_TEXT);
+                FreePageText(&pageText);
                 return S_OK;
             }
             m_state = STATE_PDF_END;

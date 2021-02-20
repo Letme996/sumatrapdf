@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 class Painter;
@@ -9,19 +9,19 @@ class EventMgr;
 // for this HWND. In your message loop you must call
 // HwndWrapper::evtMgr->OnMessage()
 class HwndWrapper : public Control {
-    bool layoutRequested;
-    bool markedForRepaint;
-    bool firstLayout;
+    bool layoutRequested = false;
+    bool markedForRepaint = false;
+    bool firstLayout = true;
 
   public:
-    Painter* painter;
-    EventMgr* evtMgr;
+    Painter* painter = nullptr;
+    EventMgr* evtMgr = nullptr;
     // size the window to fit the size of the content on first layout
-    bool sizeToFit;
+    bool sizeToFit = false;
     // center the content within the window. Incompatible with sizeToFit
-    bool centerContent;
+    bool centerContent = false;
 
-    FrameRateWnd* frameRateWnd;
+    FrameRateWnd* frameRateWnd = nullptr;
 
     HwndWrapper(HWND hwnd = nullptr);
     virtual ~HwndWrapper();
@@ -30,14 +30,16 @@ class HwndWrapper : public Control {
     void SetMaxSize(Size maxSize);
 
     void RequestLayout();
-    void MarkForRepaint() { markedForRepaint = true; }
+    void MarkForRepaint() {
+        markedForRepaint = true;
+    }
     void LayoutIfRequested();
     void SetHwnd(HWND hwnd);
     void OnPaint(HWND hwnd);
 
     // ILayout
-    virtual Size Measure(const Size availableSize);
-    virtual void Arrange(const Rect finalRect);
+    Size Measure(const Size availableSize) override;
+    void Arrange(const Rect finalRect) override;
 
     void TopLevelLayout();
 

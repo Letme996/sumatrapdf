@@ -22,7 +22,7 @@ VERSIONGREP="sed -e s/.*[^0-9\.]\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/"
 VERSIONMKMAJ="sed -e s/\([0-9][0-9]*\)[^0-9].*/\\1/"
 VERSIONMKMIN="sed -e s/.*[0-9][0-9]*\.//"
 
-JBIG2VERSIONGREP="sed -e s/^.*(\([0-9]\+\)).*/\\1/"
+JBIG2VERSIONGREP="sed -e s/^.*(\([0-9][0-9]*\)).*/\\1/"
 JBIG2MAJOR=$(grep 'define JBIG2_VERSION_MAJOR' jbig2.h | $JBIG2VERSIONGREP)
 JBIG2MINOR=$(grep 'define JBIG2_VERSION_MINOR' jbig2.h | $JBIG2VERSIONGREP)
 sed -e "s/^\(AC_INIT[^,]*,\)[^,]*\(,.*\)$/\1 [$JBIG2MAJOR.$JBIG2MINOR]\2/" configure.ac.in > configure.ac
@@ -96,7 +96,7 @@ else
   AM_NEEDED=`fgrep AUTOMAKE_OPTIONS Makefile.am | $VERSIONGREP`
   AM_MAJOR_REQ=`echo $AM_NEEDED |cut -d. -f1`
   AM_MINOR_REQ=`echo $AM_NEEDED |cut -d. -f2`
-  
+
   echo "checking for automake $AM_NEEDED or later..."
 
   if [ $AM_MAJ -lt $AM_MAJOR_REQ -o $AM_MIN -lt $AM_MINOR_REQ ] ; then

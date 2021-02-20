@@ -51,12 +51,12 @@ inline ButtonVectorDef* DeserializeButtonVectorDef(TxtNode* root) {
     return (ButtonVectorDef*)Deserialize(root, &gButtonVectorDefMetadata);
 }
 
-inline OwnedData SerializeButtonVectorDef(ButtonVectorDef* val) {
-    return Serialize((const uint8_t*)val, &gButtonVectorDefMetadata);
+inline std::string_view SerializeButtonVectorDef(ButtonVectorDef* val) {
+    return Serialize((const u8*)val, &gButtonVectorDefMetadata);
 }
 
 inline void FreeButtonVectorDef(ButtonVectorDef* val) {
-    FreeStruct((uint8_t*)val, &gButtonVectorDefMetadata);
+    FreeStruct((u8*)val, &gButtonVectorDefMetadata);
 }
 extern const StructMetadata gButtonDefMetadata;
 
@@ -69,12 +69,12 @@ inline ButtonDef* DeserializeButtonDef(TxtNode* root) {
     return (ButtonDef*)Deserialize(root, &gButtonDefMetadata);
 }
 
-inline OwnedData SerializeButtonDef(ButtonDef* val) {
-    return Serialize((const uint8_t*)val, &gButtonDefMetadata);
+inline std::string_view SerializeButtonDef(ButtonDef* val) {
+    return Serialize((const u8*)val, &gButtonDefMetadata);
 }
 
 inline void FreeButtonDef(ButtonDef* val) {
-    FreeStruct((uint8_t*)val, &gButtonDefMetadata);
+    FreeStruct((u8*)val, &gButtonDefMetadata);
 }
 extern const StructMetadata gScrollBarDefMetadata;
 
@@ -87,12 +87,12 @@ inline ScrollBarDef* DeserializeScrollBarDef(TxtNode* root) {
     return (ScrollBarDef*)Deserialize(root, &gScrollBarDefMetadata);
 }
 
-inline OwnedData SerializeScrollBarDef(ScrollBarDef* val) {
-    return Serialize((const uint8_t*)val, &gScrollBarDefMetadata);
+inline std::string_view SerializeScrollBarDef(ScrollBarDef* val) {
+    return Serialize((const u8*)val, &gScrollBarDefMetadata);
 }
 
 inline void FreeScrollBarDef(ScrollBarDef* val) {
-    FreeStruct((uint8_t*)val, &gScrollBarDefMetadata);
+    FreeStruct((u8*)val, &gScrollBarDefMetadata);
 }
 extern const StructMetadata gDirectionalLayoutDataDefMetadata;
 
@@ -105,12 +105,12 @@ inline DirectionalLayoutDataDef* DeserializeDirectionalLayoutDataDef(TxtNode* ro
     return (DirectionalLayoutDataDef*)Deserialize(root, &gDirectionalLayoutDataDefMetadata);
 }
 
-inline OwnedData SerializeDirectionalLayoutDataDef(DirectionalLayoutDataDef* val) {
-    return Serialize((const uint8_t*)val, &gDirectionalLayoutDataDefMetadata);
+inline std::string_view SerializeDirectionalLayoutDataDef(DirectionalLayoutDataDef* val) {
+    return Serialize((const u8*)val, &gDirectionalLayoutDataDefMetadata);
 }
 
 inline void FreeDirectionalLayoutDataDef(DirectionalLayoutDataDef* val) {
-    FreeStruct((uint8_t*)val, &gDirectionalLayoutDataDefMetadata);
+    FreeStruct((u8*)val, &gDirectionalLayoutDataDefMetadata);
 }
 extern const StructMetadata gHorizontalLayoutDefMetadata;
 
@@ -123,12 +123,12 @@ inline HorizontalLayoutDef* DeserializeHorizontalLayoutDef(TxtNode* root) {
     return (HorizontalLayoutDef*)Deserialize(root, &gHorizontalLayoutDefMetadata);
 }
 
-inline OwnedData SerializeHorizontalLayoutDef(HorizontalLayoutDef* val) {
-    return Serialize((const uint8_t*)val, &gHorizontalLayoutDefMetadata);
+inline std::string_view SerializeHorizontalLayoutDef(HorizontalLayoutDef* val) {
+    return Serialize((const u8*)val, &gHorizontalLayoutDefMetadata);
 }
 
 inline void FreeHorizontalLayoutDef(HorizontalLayoutDef* val) {
-    FreeStruct((uint8_t*)val, &gHorizontalLayoutDefMetadata);
+    FreeStruct((u8*)val, &gHorizontalLayoutDefMetadata);
 }
 extern const StructMetadata gVerticalLayoutDefMetadata;
 
@@ -141,10 +141,10 @@ inline VerticalLayoutDef* DeserializeVerticalLayoutDef(TxtNode* root) {
     return (VerticalLayoutDef*)Deserialize(root, &gVerticalLayoutDefMetadata);
 }
 
-inline OwnedData SerializeVerticalLayoutDef(VerticalLayoutDef* val) {
-    return Serialize((const uint8_t*)val, &gVerticalLayoutDefMetadata);
+inline std::string_view SerializeVerticalLayoutDef(VerticalLayoutDef* val) {
+    return Serialize((const u8*)val, &gVerticalLayoutDefMetadata);
 }
 
 inline void FreeVerticalLayoutDef(VerticalLayoutDef* val) {
-    FreeStruct((uint8_t*)val, &gVerticalLayoutDefMetadata);
+    FreeStruct((u8*)val, &gVerticalLayoutDefMetadata);
 }

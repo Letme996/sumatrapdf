@@ -1,31 +1,75 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
-#pragma warning(disable : 4611) // interaction between '_setjmp' and C++ object destruction is non-portable
-
 extern "C" {
+#include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
-#include <zlib.h>
 }
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
-#include "utils/GdiplusUtil.h"
-#include "BaseEngine.h"
+#include "utils/GdiPlusUtil.h"
+#include "utils/Log.h"
+
+#include "wingui/TreeModel.h"
+
+#include "Annotation.h"
+#include "EngineBase.h"
+#include "EngineFzUtil.h"
 #include "PdfCreator.h"
 
-static AutoFreeW gPdfProducer;
+// using namespace Gdiplus;
+
+using Gdiplus::ARGB;
+using Gdiplus::Bitmap;
+using Gdiplus::Brush;
+using Gdiplus::Color;
+using Gdiplus::Font;
+using Gdiplus::FontStyle;
+using Gdiplus::FontStyleRegular;
+using Gdiplus::FontStyleUnderline;
+using Gdiplus::Graphics;
+using Gdiplus::LinearGradientBrush;
+using Gdiplus::LinearGradientMode;
+using Gdiplus::Ok;
+using Gdiplus::Pen;
+using Gdiplus::SolidBrush;
+using Gdiplus::Status;
+
+using Gdiplus::CombineModeReplace;
+using Gdiplus::CompositingQualityHighQuality;
+using Gdiplus::GraphicsPath;
+using Gdiplus::Image;
+using Gdiplus::Matrix;
+using Gdiplus::PenAlignmentInset;
+using Gdiplus::Region;
+using Gdiplus::SmoothingModeAntiAlias;
+using Gdiplus::StringFormat;
+using Gdiplus::StringFormatFlagsDirectionRightToLeft;
+using Gdiplus::TextRenderingHintClearTypeGridFit;
+using Gdiplus::UnitPixel;
+
+static AutoFreeWstr gPdfProducer;
 
 void PdfCreator::SetProducerName(const WCHAR* name) {
-    if (!str::Eq(gPdfProducer, name))
+    if (!str::Eq(gPdfProducer, name)) {
         gPdfProducer.SetCopy(name);
+    }
 }
 
-static fz_image* render_to_pixmap(fz_context* ctx, HBITMAP hbmp, SizeI size) {
-    int w = size.dx, h = size.dy;
+// TODO: in 3.1.2 we had grayscale optimization, not sure if worth it
+// TODO: the resulting pdf is big, even though we tell it to compress images
+// maybe encode bitmaps to *.png or .jp2 and use AddPageFromImageData
+static fz_image* render_to_pixmap(fz_context* ctx, HBITMAP hbmp, Size size) {
+    int w = size.dx;
+    int h = size.dy;
     int stride = ((w * 3 + 3) / 4) * 4;
 
-    unsigned char* data = (unsigned char*)fz_malloc(ctx, stride * h);
+    size_t totalSize = (size_t)stride * (size_t)h;
+    u8* data = (u8*)fz_malloc(ctx, totalSize);
+    if (!data) {
+        fz_throw(ctx, FZ_ERROR_GENERIC, "render_to_pixmap: failed to allocate %d bytes", (int)stride * h);
+    }
 
     BITMAPINFO bmi = {0};
     bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
@@ -38,215 +82,198 @@ static fz_image* render_to_pixmap(fz_context* ctx, HBITMAP hbmp, SizeI size) {
     HDC hDC = GetDC(nullptr);
     int res = GetDIBits(hDC, hbmp, 0, h, data, &bmi, DIB_RGB_COLORS);
     ReleaseDC(nullptr, hDC);
-    if (!res) {
+    if (res == 0) {
         fz_free(ctx, data);
         fz_throw(ctx, FZ_ERROR_GENERIC, "GetDIBits failed");
     }
 
-    // convert BGR with padding to RGB without padding
-    unsigned char* out = data;
-    bool is_grayscale = true;
+    // convert BGR to RGB without padding
+    // Note: in 3.1.2 it was also moving data but maybe not necessary because
+    // fz_new_pixmap_with_data() understands stride?
+    u8 r, b;
     for (int y = 0; y < h; y++) {
-        const unsigned char* in = data + y * stride;
-        unsigned char green, blue;
+        u8* d = data + y * stride;
         for (int x = 0; x < w; x++) {
-            is_grayscale = is_grayscale && in[0] == in[1] && in[0] == in[2];
-            blue = *in++;
-            green = *in++;
-            *out++ = *in++;
-            *out++ = green;
-            *out++ = blue;
-        }
-    }
-    // convert grayscale RGB to proper grayscale
-    if (is_grayscale) {
-        const unsigned char* in = out = data;
-        for (int i = 0; i < w * h; i++) {
-            *out++ = *in++;
-            in += 2;
+            b = d[0];
+            // gree in the middle, stays in place
+            r = d[2];
+            d[0] = r;
+            // gree in the middle, stays in place
+            d[2] = b;
+            d += 3;
         }
     }
 
-    fz_compressed_buffer* buf = nullptr;
-    fz_var(buf);
+    fz_color_params cp = fz_default_color_params;
+    fz_colorspace* cs = fz_device_rgb(ctx);
+    fz_image* img = nullptr;
+    fz_var(img);
 
     fz_try(ctx) {
-        buf = fz_malloc_struct(ctx, fz_compressed_buffer);
-        buf->buffer = fz_new_buffer(ctx, w * h * 4 + 10);
-        buf->params.type = FZ_IMAGE_FLATE;
-        buf->params.u.flate.predictor = 1;
-
-        z_stream zstm = {0};
-        zstm.next_in = data;
-        zstm.avail_in = out - data;
-        zstm.next_out = buf->buffer->data;
-        zstm.avail_out = buf->buffer->cap;
-
-        res = deflateInit(&zstm, 9);
-        if (res != Z_OK)
-            fz_throw(ctx, FZ_ERROR_GENERIC, "deflate failure %d", res);
-        res = deflate(&zstm, Z_FINISH);
-        if (res != Z_STREAM_END)
-            fz_throw(ctx, FZ_ERROR_GENERIC, "deflate failure %d", res);
-        buf->buffer->len = zstm.total_out;
-        res = deflateEnd(&zstm);
-        if (res != Z_OK)
-            fz_throw(ctx, FZ_ERROR_GENERIC, "deflate failure %d", res);
+        fz_pixmap* pix = fz_new_pixmap_with_data(ctx, cs, w, h, nullptr, 0, stride, data);
+        pix->flags |= FZ_PIXMAP_FLAG_FREE_SAMPLES;
+        img = fz_new_image_from_pixmap(ctx, pix, nullptr);
+        fz_drop_pixmap(ctx, pix);
     }
-    fz_always(ctx) { fz_free(ctx, data); }
     fz_catch(ctx) {
-        fz_free_compressed_buffer(ctx, buf);
         fz_rethrow(ctx);
     }
-
-    fz_colorspace* cs = is_grayscale ? fz_device_gray(ctx) : fz_device_rgb(ctx);
-    return fz_new_image(ctx, w, h, 8, cs, 96, 96, 0, 0, nullptr, nullptr, buf, nullptr);
+    return img;
 }
 
-static fz_image* pack_jpeg(fz_context* ctx, const char* data, size_t len, SizeI size) {
-    fz_compressed_buffer* buf = nullptr;
-    fz_var(buf);
-
-    fz_try(ctx) {
-        buf = fz_malloc_struct(ctx, fz_compressed_buffer);
-        buf->buffer = fz_new_buffer(ctx, (int)len);
-        memcpy(buf->buffer->data, data, (buf->buffer->len = (int)len));
-        buf->params.type = FZ_IMAGE_JPEG;
-        buf->params.u.jpeg.color_transform = -1;
-    }
-    fz_catch(ctx) {
-        fz_free_compressed_buffer(ctx, buf);
-        fz_rethrow(ctx);
-    }
-
-    return fz_new_image(ctx, size.dx, size.dy, 8, fz_device_rgb(ctx), 96, 96, 0, 0, nullptr, nullptr, buf, nullptr);
+static void fz_print_cb(void* user, const char* msg) {
+    log(msg);
 }
 
-static fz_image* pack_jp2(fz_context* ctx, const char* data, size_t len, SizeI size) {
-    fz_compressed_buffer* buf = nullptr;
-    fz_var(buf);
-
-    fz_try(ctx) {
-        buf = fz_malloc_struct(ctx, fz_compressed_buffer);
-        buf->buffer = fz_new_buffer(ctx, (int)len);
-        memcpy(buf->buffer->data, data, (buf->buffer->len = (int)len));
-        buf->params.type = FZ_IMAGE_JPX;
-    }
-    fz_catch(ctx) {
-        fz_free_compressed_buffer(ctx, buf);
-        fz_rethrow(ctx);
-    }
-
-    return fz_new_image(ctx, size.dx, size.dy, 8, fz_device_rgb(ctx), 96, 96, 0, 0, nullptr, nullptr, buf, nullptr);
+static void installFitzErrorCallbacks(fz_context* ctx) {
+    fz_set_warning_callback(ctx, fz_print_cb, nullptr);
+    fz_set_error_callback(ctx, fz_print_cb, nullptr);
 }
 
 PdfCreator::PdfCreator() {
-    ctx = fz_new_context(nullptr, nullptr, FZ_STORE_DEFAULT);
-    if (!ctx)
+    ctx = fz_new_context(nullptr, nullptr, FZ_STORE_UNLIMITED);
+    if (!ctx) {
         return;
-    fz_try(ctx) { doc = pdf_create_document(ctx); }
-    fz_catch(ctx) { doc = nullptr; }
+    }
+
+    installFitzErrorCallbacks(ctx);
+    fz_try(ctx) {
+        doc = pdf_create_document(ctx);
+    }
+    fz_catch(ctx) {
+        doc = nullptr;
+    }
 }
 
 PdfCreator::~PdfCreator() {
-    pdf_close_document(doc);
-    fz_free_context(ctx);
+    pdf_drop_document(ctx, doc);
+    fz_flush_warnings(ctx);
+    fz_drop_context(ctx);
 }
 
-bool PdfCreator::AddImagePage(fz_image* image, float imgDpi) {
-    CrashIf(!ctx || !doc);
-    if (!ctx || !doc)
-        return false;
+pdf_obj* add_image_res(fz_context* ctx, pdf_document* doc, pdf_obj* resources, char* name, fz_image* image) {
+    pdf_obj *subres, *ref;
 
-    pdf_page* page = nullptr;
+    subres = pdf_dict_get(ctx, resources, PDF_NAME(XObject));
+    if (!subres) {
+        subres = pdf_new_dict(ctx, doc, 10);
+        pdf_dict_put_drop(ctx, resources, PDF_NAME(XObject), subres);
+    }
+
+    ref = pdf_add_image(ctx, doc, image);
+    pdf_dict_puts(ctx, subres, name, ref);
+    pdf_drop_obj(ctx, ref);
+    return ref;
+}
+
+// based on create_page in pdfcreate.c
+bool PdfCreator::AddPageFromFzImage(fz_image* image, float imgDpi) {
+    CrashIf(!ctx || !doc);
+    if (!ctx || !doc) {
+        return false;
+    }
+
+    pdf_obj* resources = nullptr;
+    fz_buffer* contents = nullptr;
     fz_device* dev = nullptr;
-    fz_var(page);
+
+    fz_var(contents);
+    fz_var(resources);
     fz_var(dev);
 
     fz_try(ctx) {
-        float zoom = imgDpi ? 72 / imgDpi : 1.0f;
+        float zoom = 1.0f;
+        if (imgDpi > 0) {
+            zoom = 72.0f / imgDpi;
+        }
         fz_matrix ctm = {image->w * zoom, 0, 0, image->h * zoom, 0, 0};
         fz_rect bounds = fz_unit_rect;
-        fz_transform_rect(&bounds, &ctm);
-        page = pdf_create_page(doc, bounds, 72, 0);
-        dev = pdf_page_write(doc, page);
-        fz_fill_image(dev, image, &ctm, 1.0);
-        fz_free_device(dev);
+        bounds = fz_transform_rect(bounds, ctm);
+
+        dev = pdf_page_write(ctx, doc, bounds, &resources, &contents);
+        fz_fill_image(ctx, dev, image, ctm, 1.0f, fz_default_color_params);
+        fz_drop_device(ctx, dev);
         dev = nullptr;
-        pdf_insert_page(doc, page, INT_MAX);
+
+        pdf_obj* page = pdf_add_page(ctx, doc, bounds, 0, resources, contents);
+        pdf_insert_page(ctx, doc, -1, page);
+        pdf_drop_obj(ctx, page);
     }
     fz_always(ctx) {
-        fz_free_device(dev);
-        pdf_free_page(doc, page);
+        pdf_drop_obj(ctx, resources);
+        fz_drop_buffer(ctx, contents);
+        fz_drop_device(ctx, dev);
     }
-    fz_catch(ctx) { return false; }
+    fz_catch(ctx) {
+        return false;
+    }
     return true;
 }
 
-bool PdfCreator::AddImagePage(HBITMAP hbmp, SizeI size, float imgDpi) {
-    if (!ctx || !doc)
+static bool AddPageFromHBITMAP(PdfCreator* c, HBITMAP hbmp, Size size, float imgDpi) {
+    if (!c->ctx || !c->doc) {
         return false;
+    }
 
-    fz_image* image = nullptr;
-    fz_try(ctx) { image = render_to_pixmap(ctx, hbmp, size); }
-    fz_catch(ctx) { return false; }
-    bool ok = AddImagePage(image, imgDpi);
-    fz_drop_image(ctx, image);
+    bool ok = false;
+    fz_var(ok);
+    fz_try(c->ctx) {
+        fz_image* image = render_to_pixmap(c->ctx, hbmp, size);
+        ok = c->AddPageFromFzImage(image, imgDpi);
+        fz_drop_image(c->ctx, image);
+    }
+    fz_catch(c->ctx) {
+        return false;
+    }
     return ok;
 }
 
-bool PdfCreator::AddImagePage(Bitmap* bmp, float imgDpi) {
+bool PdfCreator::AddPageFromGdiplusBitmap(Gdiplus::Bitmap* bmp, float imgDpi) {
     HBITMAP hbmp;
-    if (bmp->GetHBITMAP((ARGB)Color::White, &hbmp) != Ok)
+    if (bmp->GetHBITMAP((Gdiplus::ARGB)Gdiplus::Color::White, &hbmp) != Gdiplus::Ok) {
         return false;
-    if (!imgDpi)
+    }
+    if (!imgDpi) {
         imgDpi = bmp->GetHorizontalResolution();
-    bool ok = AddImagePage(hbmp, SizeI(bmp->GetWidth(), bmp->GetHeight()), imgDpi);
+    }
+    bool ok = AddPageFromHBITMAP(this, hbmp, Size(bmp->GetWidth(), bmp->GetHeight()), imgDpi);
     DeleteObject(hbmp);
     return ok;
 }
 
-bool PdfCreator::AddImagePage(const char* data, size_t len, float imgDpi) {
+bool PdfCreator::AddPageFromImageData(const char* data, size_t len, float imgDpi) {
     CrashIf(!ctx || !doc);
-    if (!ctx || !doc)
+    if (!ctx || !doc || !data || len == 0) {
         return false;
-
-    const WCHAR* ext = GfxFileExtFromData(data, len);
-    if (str::Eq(ext, L".jpg") || str::Eq(ext, L".jp2")) {
-        Size size = BitmapSizeFromData(data, len);
-        fz_image* image = nullptr;
-        fz_try(ctx) {
-            image = (str::Eq(ext, L".jpg") ? pack_jpeg : pack_jp2)(ctx, data, len, SizeI(size.Width, size.Height));
-        }
-        fz_catch(ctx) { return false; }
-        bool ok = AddImagePage(image, imgDpi);
-        fz_drop_image(ctx, image);
-        return ok;
     }
-    Bitmap* bmp = BitmapFromData(data, len);
-    if (!bmp)
+
+    fz_image* img = nullptr;
+    fz_var(img);
+
+    fz_try(ctx) {
+        fz_buffer* buf = fz_new_buffer_from_copied_data(ctx, (u8*)data, len);
+        img = fz_new_image_from_buffer(ctx, buf);
+    }
+    fz_catch(ctx) {
         return false;
-    bool ok = AddImagePage(bmp, imgDpi);
-    delete bmp;
+    }
+    if (!img) {
+        return false;
+    }
+    bool ok = AddPageFromFzImage(img, imgDpi);
+    fz_drop_image(ctx, img);
     return ok;
 }
 
-static bool Is7BitAscii(const WCHAR* str) {
-    for (const WCHAR* c = str; *c; c++) {
-        if (*c < 32 || *c > 127)
-            return false;
-    }
-    return true;
-}
-
 bool PdfCreator::SetProperty(DocumentProperty prop, const WCHAR* value) {
-    if (!ctx || !doc)
+    if (!ctx || !doc) {
         return false;
+    }
 
-    // adapted from PdfEngineImpl::GetProperty
+    // adapted from EnginePdf::GetProperty
     static struct {
         DocumentProperty prop;
-        char* name;
+        const char* name;
     } pdfPropNames[] = {
         {DocumentProperty::Title, "Title"},
         {DocumentProperty::Author, "Author"},
@@ -258,76 +285,115 @@ bool PdfCreator::SetProperty(DocumentProperty prop, const WCHAR* value) {
     };
     const char* name = nullptr;
     for (int i = 0; i < dimof(pdfPropNames) && !name; i++) {
-        if (pdfPropNames[i].prop == prop)
+        if (pdfPropNames[i].prop == prop) {
             name = pdfPropNames[i].name;
+        }
     }
-    if (!name)
+    if (!name) {
         return false;
-
-    AutoFree encValue;
-    int encValueLen;
-    if (Is7BitAscii(value)) {
-        encValue.Set(str::conv::ToUtf8(value).StealData());
-        encValueLen = (int)str::Len(encValue);
-    } else {
-        encValue.Set((char*)str::Join(L"\uFEFF", value));
-        encValueLen = (int)((str::Len(value) + 1) * sizeof(WCHAR));
     }
+
+    AutoFree val = strconv::WstrToUtf8(value);
+
     pdf_obj* obj = nullptr;
     fz_var(obj);
     fz_try(ctx) {
-        pdf_obj* info = pdf_dict_getp(pdf_trailer(doc), "Info");
-        if (!pdf_is_indirect(info) || !pdf_is_dict(info)) {
-            info = obj = pdf_new_dict(doc, 4);
-            pdf_dict_puts_drop(pdf_trailer(doc), "Info", pdf_new_ref(doc, obj));
-            pdf_drop_obj(obj);
+        pdf_obj* info = pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME(Info));
+        if (!info) {
+            info = pdf_new_dict(ctx, doc, 8);
+            pdf_dict_put(ctx, pdf_trailer(ctx, doc), PDF_NAME(Info), info);
+            pdf_drop_obj(ctx, info);
         }
-        pdf_dict_puts_drop(info, name, pdf_new_string(doc, encValue, encValueLen));
+
+        // TODO: not sure if pdf_new_text_string() handles utf8
+        pdf_obj* valobj = pdf_new_text_string(ctx, val.Get());
+        pdf_dict_puts_drop(ctx, info, name, valobj);
     }
     fz_catch(ctx) {
-        pdf_drop_obj(obj);
+        pdf_drop_obj(ctx, obj);
         return false;
     }
     return true;
 }
 
-bool PdfCreator::CopyProperties(BaseEngine* engine) {
-    static DocumentProperty props[] = {
-        DocumentProperty::Title,     DocumentProperty::Author,           DocumentProperty::Subject,
-        DocumentProperty::Copyright, DocumentProperty::ModificationDate, DocumentProperty::CreatorApp};
-    bool ok = true;
-    for (int i = 0; i < dimof(props); i++) {
-        AutoFreeW value(engine->GetProperty(props[i]));
+// clang-format off
+static DocumentProperty propsToCopy[] = {
+    DocumentProperty::Title,
+    DocumentProperty::Author,
+    DocumentProperty::Subject,
+    DocumentProperty::Copyright,
+    DocumentProperty::ModificationDate,
+    DocumentProperty::CreatorApp
+};
+// clang-format on
+
+bool PdfCreator::CopyProperties(EngineBase* engine) {
+    bool ok;
+    for (int i = 0; i < dimof(propsToCopy); i++) {
+        AutoFreeWstr value = engine->GetProperty(propsToCopy[i]);
         if (value) {
-            ok = ok && SetProperty(props[i], value);
+            ok = SetProperty(propsToCopy[i], value);
+            if (!ok) {
+                return false;
+            }
         }
     }
-    return ok;
-}
-
-bool PdfCreator::SaveToFile(const char* filePath) {
-    if (!ctx || !doc)
-        return false;
-
-    if (gPdfProducer)
-        SetProperty(DocumentProperty::PdfProducer, gPdfProducer);
-
-    fz_try(ctx) { pdf_write_document(doc, const_cast<char*>(filePath), nullptr); }
-    fz_catch(ctx) { return false; }
     return true;
 }
 
-bool PdfCreator::RenderToFile(const char* pdfFileName, BaseEngine* engine, int dpi) {
+const pdf_write_options pdf_default_write_options2 = {
+    0,  /* do_incremental */
+    0,  /* do_pretty */
+    0,  /* do_ascii */
+    0,  /* do_compress */
+    0,  /* do_compress_images */
+    0,  /* do_compress_fonts */
+    0,  /* do_decompress */
+    0,  /* do_garbage */
+    0,  /* do_linear */
+    0,  /* do_clean */
+    0,  /* do_sanitize */
+    0,  /* do_appearance */
+    0,  /* do_encrypt */
+    0,  /* dont_regenerate_id */
+    ~0, /* permissions */
+    "", /* opwd_utf8[128] */
+    "", /* upwd_utf8[128] */
+};
+
+bool PdfCreator::SaveToFile(const char* filePath) {
+    if (!ctx || !doc) {
+        return false;
+    }
+
+    if (gPdfProducer) {
+        SetProperty(DocumentProperty::PdfProducer, gPdfProducer);
+    }
+
+    fz_try(ctx) {
+        pdf_write_options opts = pdf_default_write_options2;
+        opts.do_compress = 1;
+        opts.do_compress_images = 1;
+        pdf_save_document(ctx, doc, (const char*)filePath, &opts);
+    }
+    fz_catch(ctx) {
+        return false;
+    }
+    return true;
+}
+
+bool PdfCreator::RenderToFile(const char* pdfFileName, EngineBase* engine, int dpi) {
     PdfCreator* c = new PdfCreator();
     bool ok = true;
     // render all pages to images
     float zoom = dpi / engine->GetFileDPI();
     for (int i = 1; ok && i <= engine->PageCount(); i++) {
-        RenderedBitmap* bmp = engine->RenderBitmap(i, zoom, 0, nullptr, RenderTarget::Export);
-        if (bmp)
-            ok = c->AddImagePage(bmp->GetBitmap(), bmp->Size(), dpi);
-        else
-            ok = false;
+        RenderPageArgs args(i, zoom, 0, nullptr, RenderTarget::Export);
+        RenderedBitmap* bmp = engine->RenderPage(args);
+        ok = false;
+        if (bmp) {
+            ok = AddPageFromHBITMAP(c, bmp->GetBitmap(), bmp->Size(), dpi);
+        }
         delete bmp;
     }
     if (!ok) {

@@ -1,20 +1,21 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
-#include "utils/SimpleLog.h"
+#include "utils/Log.h"
 
 // must be last due to assert() over-write
 #include "utils/UtAssert.h"
 
 void SimpleLogTest() {
     {
-        slog::MemoryLogger log;
-        log.Log(L"Test1");
-        log.Log(L"ML");
-        log.LogFmt(L"%s : %d", L"filen\xE4me.pdf", 25);
+        log(L"Test1\n");
+        log(L"ML\n");
+        logf(L"%s : %d\n", L"filename.pdf", 25);
 
-        utassert(str::Eq(log.GetData(), L"Test1\r\nML\r\nfilen\xE4me.pdf : 25\r\n"));
+        char* got = gLogBuf->Get();
+        const char* exp = "Test1\nML\nfilename.pdf : 25\n";
+        utassert(str::Eq(got, exp));
     }
 }

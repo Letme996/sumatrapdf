@@ -1,7 +1,10 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
-#include "BaseUtil.h"
+#include "utils/BaseUtil.h"
+
+// if > 1 we won't crash when memory allocation fails
+std::atomic<int> gAllowAllocFailure = 0;
 
 void* Allocator::Alloc(Allocator* a, size_t size) {
     if (!a) {
@@ -19,6 +22,9 @@ void* Allocator::AllocZero(Allocator* a, size_t size) {
 }
 
 void Allocator::Free(Allocator* a, void* p) {
+    if (!p) {
+        return;
+    }
     if (!a) {
         free(p);
     } else {
@@ -52,16 +58,13 @@ char* Allocator::StrDup(Allocator* a, const char* s) {
 // allocates a copy of the source string inside the allocator.
 // it's only safe in PoolAllocator because allocated data
 // never moves in memory
-std::string_view Allocator::AllocString(Allocator* a, std::string_view str) {
-    size_t n = str.size();
-    size_t toCopy = n + 1;
-    const char* src = str.data();
-    if (!src) {
-        src = "";
-    }
-    void* dst = Allocator::Alloc(a, toCopy);
-    memcpy(dst, (const void*)src, toCopy);
-    return std::string_view((const char*)dst, n);
+std::string_view Allocator::AllocString(Allocator* a, std::string_view sv) {
+    size_t n = sv.size();
+    char* dst = (char*)Allocator::Alloc(a, n + 1);
+    const char* src = sv.data();
+    memcpy(dst, (const void*)src, n);
+    dst[n] = 0; // we don't assume sv.data() is 0-terminated
+    return std::string_view(dst, n);
 }
 
 #if OS_WIN
@@ -74,54 +77,50 @@ WCHAR* Allocator::StrDup(Allocator* a, const WCHAR* s) {
 }
 #endif
 
-void PoolAllocator::SetMinBlockSize(size_t newMinBlockSize) {
-    CrashIf(currBlock); // can only be changed before first allocation
-    minBlockSize = newMinBlockSize;
-}
-
-void PoolAllocator::SetAllocRounding(size_t newRounding) {
-    CrashIf(currBlock); // can only be changed before first allocation
-    allocRounding = newRounding;
+void PoolAllocator::Free(const void*) {
+    // does nothing, we can't free individual pieces of memory
 }
 
 void PoolAllocator::FreeAll() {
-    MemBlockNode* curr = firstBlock;
+    Block* curr = firstBlock;
     while (curr) {
-        MemBlockNode* next = curr->next;
+        Block* next = curr->next;
         free(curr);
         curr = next;
     }
     currBlock = nullptr;
     firstBlock = nullptr;
+    nAllocs = 0;
+}
+
+// optimization: frees all but first block
+// allows for more efficient re-use of PoolAllocator
+// with more effort we could preserve all blocks (not sure if worth it)
+void PoolAllocator::Reset() {
+    FreeAll();
+
+    // TODO: optimize by not freeing the first block, to speed up re-use
+#if 0
+    if (!firstBlock) {
+        return;
+    }
+    Block* first = firstBlock;
+    firstBlock = first->next;
+    FreeAll();
+
+    firstBlock = first;
+    first->next = nullptr;
+    first->nAllocs = 0;
+    // TODO: properly reset first
+#endif
 }
 
 PoolAllocator::~PoolAllocator() {
     FreeAll();
 }
 
-void PoolAllocator::AllocBlock(size_t minSize) {
-    minSize = RoundUp(minSize, allocRounding);
-    size_t size = minBlockSize;
-    if (minSize > size) {
-        size = minSize;
-    }
-    MemBlockNode* node = (MemBlockNode*)calloc(1, sizeof(MemBlockNode) + size);
-    CrashAlwaysIf(!node);
-    if (!firstBlock) {
-        firstBlock = node;
-    }
-    node->size = size;
-    node->free = size;
-    if (currBlock) {
-        currBlock->next = node;
-    }
-    currBlock = node;
-}
-
 // Allocator methods
-void* PoolAllocator::Realloc(void* mem, size_t size) {
-    UNUSED(mem);
-    UNUSED(size);
+void* PoolAllocator::Realloc(void*, size_t) {
     // TODO: we can't do that because we don't know the original
     // size of memory piece pointed by mem. We could remember it
     // within the block that we allocate
@@ -129,162 +128,81 @@ void* PoolAllocator::Realloc(void* mem, size_t size) {
     return nullptr;
 }
 
+static bool BlockHasSpaceFor(PoolAllocator::Block* block, int size, int allocAlign) {
+    if (!block) {
+        return false;
+    }
+    char* d = RoundUp(block->curr, allocAlign);
+    // data + i32 index of allocation
+    d += (size + sizeof(i32));
+    if (d > block->end) {
+        return false;
+    }
+    return true;
+}
+
 void* PoolAllocator::Alloc(size_t size) {
-    size = RoundUp(size, allocRounding);
-    if (!currBlock || (currBlock->free < size)) {
-        AllocBlock(size);
-    }
-
-    void* mem = (void*)(currBlock->DataStart() + currBlock->Used());
-    currBlock->free -= size;
-    return mem;
-}
-
-// assuming allocated memory was for pieces of uniform size,
-// find the address of n-th piece
-void* PoolAllocator::FindNthPieceOfSize(size_t size, size_t n) const {
-    size = RoundUp(size, allocRounding);
-    MemBlockNode* curr = firstBlock;
-    while (curr) {
-        size_t piecesInBlock = curr->Used() / size;
-        if (piecesInBlock > n) {
-            char* p = (char*)curr + sizeof(MemBlockNode) + (n * size);
-            return (void*)p;
+    if (!BlockHasSpaceFor(currBlock, (int)size, allocAlign)) {
+        int freeSpaceSize = (int)size + sizeof(i32); // + space for index
+        int hdrSize = RoundUp((int)sizeof(PoolAllocator::Block), allocAlign);
+        int blockSize = hdrSize + freeSpaceSize;
+        if (blockSize < minBlockSize) {
+            blockSize = minBlockSize;
+            freeSpaceSize = minBlockSize - hdrSize;
         }
-        n -= piecesInBlock;
-        curr = curr->next;
+        // TODO: zero with calloc()? slower but safer
+        auto block = (Block*)malloc(blockSize);
+        char* start = (char*)block;
+
+        block->nAllocs = 0;
+        block->curr = start + hdrSize;
+        block->dataSize = freeSpaceSize;
+        block->end = start + block->dataSize;
+        block->next = nullptr;
+        if (!firstBlock) {
+            firstBlock = block;
+        }
+        if (currBlock) {
+            currBlock->next = block;
+        }
+        currBlock = block;
     }
-    return nullptr;
-}
+    char* res = RoundUp(currBlock->curr, allocAlign);
+    currBlock->curr = res + size;
 
-OwnedData::OwnedData(const char* data, size_t size) {
-    if (size == 0) {
-        size = str::Len(data);
-    }
-    this->data = (char*)data;
-    this->size = size;
-}
+    char* blockStart = (char*)currBlock;
 
-OwnedData::~OwnedData() {
-    free(data);
-}
-
-OwnedData::OwnedData(OwnedData&& other) {
-    CrashIf(this == &other);
-    this->data = other.data;
-    this->size = other.size;
-    other.data = nullptr;
-    other.size = 0;
-}
-
-OwnedData& OwnedData::operator=(OwnedData&& other) {
-    CrashIf(this == &other);
-    this->data = other.data;
-    this->size = other.size;
-    other.data = nullptr;
-    other.size = 0;
-    return *this;
-}
-
-bool OwnedData::IsEmpty() {
-    return (data == nullptr) || (size == 0);
-}
-
-void OwnedData::Clear() {
-    free(data);
-    data = nullptr;
-    size = 0;
-}
-
-char* OwnedData::Get() const {
-    return data;
-}
-
-std::string_view OwnedData::AsView() const {
-    return {data, size};
-}
-
-void OwnedData::TakeOwnership(const char* s, size_t size) {
-    if (size == 0) {
-        size = str::Len(s);
-    }
-    free(data);
-    data = (char*)s;
-    this->size = size;
-}
-
-OwnedData OwnedData::MakeFromStr(const char* s, size_t size) {
-    if (size == 0) {
-        return OwnedData(str::Dup(s), str::Len(s));
-    }
-
-    char* tmp = str::DupN(s, size);
-    return OwnedData(tmp, size);
-}
-
-char* OwnedData::StealData() {
-    auto* res = data;
-    data = nullptr;
-    size = 0;
+    i32 offset = (i32)(res - blockStart);
+    i32* index = (i32*)currBlock->end;
+    index -= 1;
+    index[0] = offset;
+    currBlock->end = (char*)index;
+    currBlock->nAllocs += 1;
+    nAllocs += 1;
     return res;
 }
 
-MaybeOwnedData::MaybeOwnedData(char* data, size_t size, bool isOwned) {
-    Set(data, size, isOwned);
-}
-
-MaybeOwnedData::~MaybeOwnedData() {
-    freeIfOwned();
-}
-
-MaybeOwnedData::MaybeOwnedData(MaybeOwnedData&& other) {
-    CrashIf(this == &other);
-    this->data = other.data;
-    this->size = other.size;
-    this->isOwned = other.isOwned;
-    other.data = nullptr;
-    other.size = 0;
-}
-
-MaybeOwnedData& MaybeOwnedData::operator=(MaybeOwnedData&& other) {
-    CrashIf(this == &other);
-    this->data = other.data;
-    this->size = other.size;
-    this->isOwned = other.isOwned;
-    other.data = nullptr;
-    other.size = 0;
-    return *this;
-}
-
-void MaybeOwnedData::Set(char* s, size_t len, bool isOwned) {
-    freeIfOwned();
-    if (len == 0) {
-        len = str::Len(s);
+void* PoolAllocator::At(int i) {
+    CrashIf(i < 0 || i >= nAllocs);
+    if (i < 0 || i >= nAllocs) {
+        return nullptr;
     }
-    data = s;
-    size = len;
-    this->isOwned = isOwned;
-}
-
-void MaybeOwnedData::freeIfOwned() {
-    if (isOwned) {
-        free(data);
-        data = nullptr;
-        size = 0;
-        isOwned = false;
+    auto curr = firstBlock;
+    while (curr && i >= curr->nAllocs) {
+        i -= curr->nAllocs;
+        curr = curr->next;
     }
-}
-
-OwnedData MaybeOwnedData::StealData() {
-    char* res = data;
-    size_t resSize = size;
-    if (!isOwned) {
-        res = str::DupN(data, size);
+    CrashIf(!curr);
+    if (!curr) {
+        return nullptr;
     }
-    data = nullptr;
-    size = 0;
-    isOwned = false;
-    return OwnedData(res, resSize);
+    CrashIf(i >= curr->nAllocs);
+    i32* index = (i32*)curr->end;
+    // elements are in reverse
+    int idx = curr->nAllocs - i - 1;
+    i32 offset = index[idx];
+    char* d = (char*)curr + offset;
+    return (void*)d;
 }
 
 #if !OS_WIN
@@ -293,11 +211,19 @@ void ZeroMemory(void* p, size_t len) {
 }
 #endif
 
+// This exits so that I can add temporary instrumentation
+// to catch allocations of a given size and it won't cause
+// re-compilation of everything caused by changing BaseUtil.h
+void* AllocZero(size_t count, size_t size) {
+    return calloc(count, size);
+}
+
 void* memdup(const void* data, size_t len) {
     void* dup = malloc(len);
-    if (dup) {
-        memcpy(dup, data, len);
+    if (!dup) {
+        return nullptr;
     }
+    memcpy(dup, data, len);
     return dup;
 }
 
@@ -310,7 +236,19 @@ size_t RoundUp(size_t n, size_t rounding) {
 }
 
 int RoundUp(int n, int rounding) {
+    if (rounding <= 1) {
+        return n;
+    }
     return ((n + rounding - 1) / rounding) * rounding;
+}
+
+char* RoundUp(char* d, int rounding) {
+    if (rounding <= 1) {
+        return d;
+    }
+    uintptr_t n = (uintptr_t)d;
+    n = ((n + rounding - 1) / rounding) * rounding;
+    return (char*)n;
 }
 
 size_t RoundToPowerOf2(size_t size) {
@@ -335,22 +273,22 @@ size_t RoundToPowerOf2(size_t size) {
  * 2. It will not produce the same results on little-endian and big-endian
  *    machines.
  */
-static uint32_t hash_function_seed = 5381;
+static u32 hash_function_seed = 5381;
 
-uint32_t MurmurHash2(const void* key, size_t len) {
+u32 MurmurHash2(const void* key, size_t len) {
     /* 'm' and 'r' are mixing constants generated offline.
      They're not really 'magic', they just happen to work well.  */
-    const uint32_t m = 0x5bd1e995;
+    const u32 m = 0x5bd1e995;
     const int r = 24;
 
     /* Initialize the hash to a 'random' value */
-    uint32_t h = hash_function_seed ^ (uint32_t)len;
+    u32 h = hash_function_seed ^ (u32)len;
 
     /* Mix 4 bytes at a time into the hash */
-    const uint8_t* data = (const uint8_t*)key;
+    const u8* data = (const u8*)key;
 
     while (len >= 4) {
-        uint32_t k = *(uint32_t*)data;
+        u32 k = *(u32*)data;
 
         k *= m;
         k ^= k >> r;
@@ -383,19 +321,92 @@ uint32_t MurmurHash2(const void* key, size_t len) {
     return h;
 }
 
-#if OS_WIN
-BYTE GetRValueSafe(COLORREF rgb) {
-    rgb = rgb & 0xff;
-    return (BYTE)rgb;
+int VecStrIndex::ItemsLeft() {
+    return kVecStrIndexSize - nStrings;
 }
 
-BYTE GetGValueSafe(COLORREF rgb) {
-    rgb = (rgb >> 8) & 0xff;
-    return (BYTE)rgb;
+int VecStr::Size() {
+    VecStrIndex* idx = firstIndex;
+    int n = 0;
+    while (idx) {
+        n += idx->nStrings;
+        idx = idx->next;
+    }
+    return n;
 }
 
-BYTE GetBValueSafe(COLORREF rgb) {
-    rgb = (rgb >> 16) & 0xff;
-    return (BYTE)rgb;
+std::string_view VecStr::at(int i) {
+    CrashIf(i < 0);
+    VecStrIndex* idx = firstIndex;
+    while (idx) {
+        if (idx->nStrings > i) {
+            break;
+        }
+        i -= idx->nStrings;
+        idx = idx->next;
+    }
+    if (idx == nullptr) {
+        CrashMe();
+        return {};
+    }
+    CrashIf(idx->nStrings <= i);
+    if (idx->nStrings <= i) {
+        return {};
+    }
+    const char* s = (const char*)idx->offsets[i];
+    i32 size = idx->sizes[i];
+    return {s, (size_t)size};
 }
-#endif
+
+static bool allocateIndexIfNeeded(VecStr& v) {
+    if (v.currIndex && v.currIndex->ItemsLeft() > 0) {
+        return true;
+    }
+
+    // for structures we want aligned allocation. 8 should be good enough for everything
+    v.allocator.allocAlign = 8;
+    VecStrIndex* idx = v.allocator.AllocStruct<VecStrIndex>();
+
+    if (!idx && (gAllowAllocFailure.load() > 0)) {
+        return false;
+    }
+    idx->next = nullptr;
+    idx->nStrings = 0;
+
+    if (!v.firstIndex) {
+        v.firstIndex = idx;
+        v.currIndex = idx;
+    } else {
+        CrashIf(!v.firstIndex);
+        CrashIf(!v.currIndex);
+        v.currIndex->next = idx;
+        v.currIndex = idx;
+    }
+    return true;
+}
+
+bool VecStr::Append(std::string_view sv) {
+    bool ok = allocateIndexIfNeeded(*this);
+    if (!ok) {
+        return false;
+    }
+    constexpr size_t maxLen = (size_t)std::numeric_limits<i32>::max();
+    CrashIf(sv.size() > maxLen);
+    if (sv.size() > maxLen) {
+        return false;
+    }
+    allocator.allocAlign = 1; // no need to align allocations for string
+    std::string_view res = Allocator::AllocString(&allocator, sv);
+
+    int n = currIndex->nStrings;
+    currIndex->offsets[n] = (char*)res.data();
+    currIndex->sizes[n] = (i32)res.size();
+    currIndex->nStrings++;
+    return true;
+}
+
+void VecStr::Reset() {
+    allocator.Reset();
+    firstIndex = nullptr;
+    currIndex = nullptr;
+}

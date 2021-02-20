@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 // signfile produces a cryptographic signature of a given file
@@ -19,16 +19,17 @@
 #include "utils/FileUtil.h"
 
 #define ErrOut(msg, ...) fwprintf(stderr, TEXT(msg) TEXT("\n"), __VA_ARGS__)
+#define ErrOut1(msg) fwprintf(stderr, TEXT("%s"), TEXT(msg) TEXT("\n"))
 
 void ShowUsage(const WCHAR* exeName) {
-    ErrOut("Syntax: %s", path::GetBaseName(exeName));
-    ErrOut("\t[-cert CertName]\t- name of the certificate to use");      // when omitted uses first available
-    ErrOut("\t[-out filename.out]\t- where to save the signature file"); // when omitted uses stdout
-    ErrOut("\t[-comment #]\t\t- comment syntax for signed text files");  // needed when saving the signature into the
-                                                                         // signed file
-    ErrOut("\t[-pubkey public.key]\t- where to save the public key");    // usually not needed
-    ErrOut("\tfilename.in"); // usually needed, optional when -pubkey is present
-    ErrOut("");
+    ErrOut("Syntax: %s", path::GetBaseNameNoFree(exeName));
+    ErrOut1("\t[-cert CertName]\t- name of the certificate to use");      // when omitted uses first available
+    ErrOut1("\t[-out filename.out]\t- where to save the signature file"); // when omitted uses stdout
+    ErrOut1("\t[-comment #]\t\t- comment syntax for signed text files");  // needed when saving the signature into the
+                                                                          // signed file
+    ErrOut1("\t[-pubkey public.key]\t- where to save the public key");    // usually not needed
+    ErrOut1("\tfilename.in"); // usually needed, optional when -pubkey is present
+    ErrOut1("");
 
     HCERTSTORE hStore = CertOpenSystemStore(NULL, L"My");
     CrashAlwaysIf(!hStore);
@@ -37,21 +38,22 @@ void ShowUsage(const WCHAR* exeName) {
     while ((pCertCtx = CertEnumCertificatesInStore(hStore, pCertCtx)) != nullptr) {
         WCHAR name[128];
         DWORD res = CertGetNameString(pCertCtx, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, name, dimof(name));
-        if (!res)
+        if (!res) {
             continue;
+        }
         HCRYPTPROV hProv = NULL;
         DWORD keySpec = 0;
         BOOL ok = CryptAcquireCertificatePrivateKey(pCertCtx, 0, nullptr, &hProv, &keySpec, nullptr);
         if (!ok || (keySpec & AT_SIGNATURE) != AT_SIGNATURE)
             continue;
         if (!hasCert) {
-            ErrOut("Available certificates:");
+            ErrOut1("Available certificates:");
             hasCert = true;
         }
         ErrOut("\"%s\"", name);
     }
     if (!hasCert)
-        ErrOut("Warning: Failed to find a signature certificate in store \"My\"!");
+        ErrOut1("Warning: Failed to find a signature certificate in store \"My\"!");
     CertCloseStore(hStore, 0);
 }
 
@@ -74,7 +76,7 @@ int main() {
         else if (is_arg("-pubkey", pubkeyPath))
             pubkeyPath = args.at(++i);
         else if (is_arg("-comment", inFileCommentSyntax)) {
-            auto tmp = str::conv::ToUtf8(args.at(++i));
+            auto tmp = strconv::ToUtf8(args.at(++i));
             inFileCommentSyntax.Set(tmp.StealData());
         } else if (!filePath)
             filePath = args.at(i);
@@ -122,7 +124,7 @@ int main() {
             if (ok && (keySpec & AT_SIGNATURE) == AT_SIGNATURE)
                 break;
         }
-        QuitIfNot(pCertCtx, "Error: Failed to find a signature certificate in store \"My\"!");
+        QuitIfNot(pCertCtx, "%s", "Error: Failed to find a signature certificate in store \"My\"!");
     } else {
         DWORD keySpec;
         do {
@@ -138,13 +140,13 @@ int main() {
 
     // extract public key for verficiation and export
     ok = CryptGetUserKey(hProv, AT_SIGNATURE, &hKey);
-    QuitIfNot(ok, "Error: Failed to export the public key!");
+    QuitIfNot(ok, "%s", "Error: Failed to export the public key!");
     DWORD pubkeyLen = 0;
     ok = CryptExportKey(hKey, NULL, PUBLICKEYBLOB, 0, nullptr, &pubkeyLen);
-    QuitIfNot(ok, "Error: Failed to export the public key!");
+    QuitIfNot(ok, "%s", "Error: Failed to export the public key!");
     pubkey.Set(AllocArray<BYTE>(pubkeyLen));
     ok = CryptExportKey(hKey, NULL, PUBLICKEYBLOB, 0, pubkey.Get(), &pubkeyLen);
-    QuitIfNot(ok, "Error: Failed to export the public key!");
+    QuitIfNot(ok, "%s", "Error: Failed to export the public key!");
     if (pubkeyPath) {
         ok = file::WriteFile(pubkeyPath, pubkey.Get(), pubkeyLen);
         QuitIfNot(ok, "Error: Failed to write the public key to \"%s\"!", pubkeyPath);
@@ -154,13 +156,13 @@ int main() {
     // prepare data for signing
     size_t dataLen;
     {
-        OwnedData tmp(file::ReadFile(filePath));
+        AutoFree tmp(file::ReadFile(filePath));
         dataLen = tmp.size;
         data.Set(tmp.StealData());
     }
     QuitIfNot(data && dataLen <= UINT_MAX, "Error: Failed to read from \"%s\" (or file is too large)!", filePath);
     ok = !inFileCommentSyntax || (dataLen > 0 && !memchr(data.Get(), 0, dataLen));
-    QuitIfNot(ok, "Error: Can't put signature comment into binary or empty file!");
+    QuitIfNot(ok, "%s", "Error: Can't put signature comment into binary or empty file!");
     if (inFileCommentSyntax) {
         // cut previous signature from file
         char* lastLine = data + dataLen - 1;
@@ -178,7 +180,7 @@ int main() {
 
     // sign data
     ok = CryptCreateHash(hProv, CALG_SHA1, 0, 0, &hHash);
-    QuitIfNot(ok, "Error: Failed to create a SHA-1 hash!");
+    QuitIfNot(ok, "%s", "Error: Failed to create a SHA-1 hash!");
 #ifdef _WIN64
     {
         const BYTE* bytes = (const BYTE*)data.Get();
@@ -191,16 +193,16 @@ int main() {
 #else
     ok = CryptHashData(hHash, (const BYTE*)data.Get(), dataLen, 0);
 #endif
-    QuitIfNot(ok, "Error: Failed to calculate the SHA-1 hash!");
+    QuitIfNot(ok, "%s", "Error: Failed to calculate the SHA-1 hash!");
     DWORD sigLen = 0;
     ok = CryptSignHash(hHash, AT_SIGNATURE, nullptr, 0, nullptr, &sigLen);
-    QuitIfNot(ok, "Error: Failed to sign the SHA-1 hash!");
+    QuitIfNot(ok, "%s", "Error: Failed to sign the SHA-1 hash!");
     signature.Set(AllocArray<BYTE>(sigLen));
     ok = CryptSignHash(hHash, AT_SIGNATURE, nullptr, 0, signature.Get(), &sigLen);
-    QuitIfNot(ok, "Error: Failed to sign the SHA-1 hash!");
+    QuitIfNot(ok, "%s", "Error: Failed to sign the SHA-1 hash!");
 
     // convert signature to ASCII text
-    hexSignature.Set(str::MemToHex((const unsigned char*)signature.Get(), sigLen));
+    hexSignature.Set(str::MemToHex((const u8*)signature.Get(), sigLen));
     if (inFileCommentSyntax) {
         const char* lf = str::Find(data, "\r\n") || !str::FindChar(data, '\n') ? "\r\n" : "\n";
         data.Set(str::Format("%s%s Signature sha1:%s%s", data, inFileCommentSyntax, hexSignature, lf));
@@ -215,7 +217,7 @@ int main() {
         sig = hexSignature.Get();
     }
     ok = VerifySHA1Signature(data.Get(), dataLen, sig, pubkey, pubkeyLen);
-    QuitIfNot(ok, "Error: Failed to verify signature!");
+    QuitIfNot(ok, "%s", "Error: Failed to verify signature!");
 
     // save/display signature
     if (signFilePath) {

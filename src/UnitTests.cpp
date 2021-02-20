@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
@@ -7,25 +7,26 @@
 #include "utils/WinUtil.h"
 #include "utils/StrFormat.h"
 
+#include "DisplayMode.h"
 #include "SettingsStructs.h"
 #include "GlobalPrefs.h"
-#include "ParseCommandLine.h"
+#include "Flags.h"
 
 // must be last to over-write assert()
 #include "utils/UtAssert.h"
 
 static void ParseCommandLineTest() {
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -bench foo.pdf");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -bench foo.pdf", i);
         utassert(2 == i.pathsToBenchmark.size());
         utassert(str::Eq(L"foo.pdf", i.pathsToBenchmark.at(0)));
         utassert(nullptr == i.pathsToBenchmark.at(1));
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -bench foo.pdf -fwdsearch-width 5");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -bench foo.pdf -fwdsearch-width 5", i);
         utassert(i.globalPrefArgs.size() == 2);
         const WCHAR* s = i.globalPrefArgs.at(0);
         utassert(str::Eq(s, L"-fwdsearch-width"));
@@ -37,16 +38,16 @@ static void ParseCommandLineTest() {
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -bench bar.pdf loadonly");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -bench bar.pdf loadonly", i);
         utassert(2 == i.pathsToBenchmark.size());
         utassert(str::Eq(L"bar.pdf", i.pathsToBenchmark.at(0)));
         utassert(str::Eq(L"loadonly", i.pathsToBenchmark.at(1)));
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -bench bar.pdf 1 -set-color-range 0x123456 #abCDef");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -bench bar.pdf 1 -set-color-range 0x123456 #abCDef", i);
         utassert(i.globalPrefArgs.size() == 3);
         utassert(2 == i.pathsToBenchmark.size());
         utassert(str::Eq(L"bar.pdf", i.pathsToBenchmark.at(0)));
@@ -54,8 +55,8 @@ static void ParseCommandLineTest() {
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -bench bar.pdf 1-5,3   -bench some.pdf 1,3,8-34");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -bench bar.pdf 1-5,3   -bench some.pdf 1,3,8-34", i);
         utassert(4 == i.pathsToBenchmark.size());
         utassert(str::Eq(L"bar.pdf", i.pathsToBenchmark.at(0)));
         utassert(str::Eq(L"1-5,3", i.pathsToBenchmark.at(1)));
@@ -64,9 +65,8 @@ static void ParseCommandLineTest() {
     }
 
     {
-        CommandLineInfo i;
-        utassert(false == i.invertColors);
-        i.ParseCommandLine(L"SumatraPDF.exe -presentation -bgcolor 0xaa0c13 foo.pdf -invert-colors bar.pdf");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -presentation -bgcolor 0xaa0c13 foo.pdf -invert-colors bar.pdf", i);
         utassert(true == i.enterPresentation);
         utassert(true == i.invertColors);
         utassert(2 == i.fileNames.size());
@@ -75,51 +75,51 @@ static void ParseCommandLineTest() {
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -bg-color 0xaa0c13 -invertcolors rosanna.pdf");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -bg-color 0xaa0c13 -invertcolors rosanna.pdf", i);
         utassert(true == i.invertColors);
         utassert(1 == i.fileNames.size());
         utassert(0 == i.fileNames.Find(L"rosanna.pdf"));
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe \"foo \\\" bar \\\\.pdf\" un\\\"quoted.pdf");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe \"foo \\\" bar \\\\.pdf\" un\\\"quoted.pdf", i);
         utassert(2 == i.fileNames.size());
         utassert(0 == i.fileNames.Find(L"foo \" bar \\\\.pdf"));
         utassert(1 == i.fileNames.Find(L"un\"quoted.pdf"));
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(
-            L"SumatraPDF.exe -page 37 -view continuousfacing -zoom fitcontent -scroll 45,1234 -reuse-instance");
+        Flags i;
+        ParseCommandLine(
+            L"SumatraPDF.exe -page 37 -view continuousfacing -zoom fitcontent -scroll 45,1234 -reuse-instance", i);
         utassert(0 == i.fileNames.size());
         utassert(i.pageNumber == 37);
-        utassert(i.startView == DM_CONTINUOUS_FACING);
+        utassert(i.startView == DisplayMode::ContinuousFacing);
         utassert(i.startZoom == ZOOM_FIT_CONTENT);
         utassert(i.startScroll.x == 45 && i.startScroll.y == 1234);
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -view \"single page\" -zoom 237.45 -scroll -21,-1");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -view \"single page\" -zoom 237.45 -scroll -21,-1", i);
         utassert(0 == i.fileNames.size());
-        utassert(i.startView == DM_SINGLE_PAGE);
+        utassert(i.startView == DisplayMode::SinglePage);
         utassert(i.startZoom == 237.45f);
         utassert(i.startScroll.x == -21 && i.startScroll.y == -1);
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -zoom 35%");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -zoom 35%", i);
         utassert(0 == i.fileNames.size());
         utassert(i.startZoom == 35.f);
     }
 
     {
-        CommandLineInfo i;
-        i.ParseCommandLine(L"SumatraPDF.exe -zoom fit-content");
+        Flags i;
+        ParseCommandLine(L"SumatraPDF.exe -zoom fit-content", i);
         utassert(i.startZoom == ZOOM_FIT_CONTENT);
         utassert(0 == i.fileNames.size());
     }
@@ -160,8 +160,8 @@ static void versioncheck_test() {
 }
 
 static void hexstrTest() {
-    unsigned char buf[6] = {1, 2, 33, 255, 0, 18};
-    unsigned char buf2[6] = {0};
+    u8 buf[6] = {1, 2, 33, 255, 0, 18};
+    u8 buf2[6] = {0};
     AutoFree s(_MemToHex(&buf));
     utassert(str::Eq(s, "010221ff0012"));
     bool ok = _HexToMem(s, &buf2);
@@ -182,7 +182,47 @@ static void hexstrTest() {
     utassert(ok);
 }
 
+static void assertSerializedColor(COLORREF c, const char* s) {
+    str::Str out;
+    SerializeColor(c, out);
+    auto s2 = out.Get();
+    utassert(str::Eq(s2, s));
+}
+
+static void colorTest() {
+    COLORREF c = 0;
+    bool ok = ParseColor(&c, "0x01020304");
+    utassert(ok);
+    assertSerializedColor(c, "#01020304");
+
+    ok = ParseColor(&c, "#01020304");
+    utassert(ok);
+    assertSerializedColor(c, "#01020304");
+
+    COLORREF c2 = MkRgba(2, 3, 4, 1);
+    assertSerializedColor(c2, "#01020304");
+    utassert(c == c2);
+    c = ColorSetRed(c, 5);
+    assertSerializedColor(c, "#01050304");
+    c2 = MkRgba(5, 3, 4, 1);
+    utassert(c == c2);
+    c = ColorSetBlue(c, 6);
+    assertSerializedColor(c, "#01050306");
+    c2 = MkRgba(5, 3, 6, 1);
+    utassert(c == c2);
+    c = ColorSetGreen(c, 7);
+    assertSerializedColor(c, "#01050706");
+    c2 = MkRgba(5, 7, 6, 1);
+    utassert(c == c2);
+    c = ColorSetAlpha(c, 8);
+    assertSerializedColor(c, "#08050706");
+    c2 = MkRgba(5, 7, 6, 8);
+    assertSerializedColor(c2, "#08050706");
+    utassert(c == c2);
+}
+
 void SumatraPDF_UnitTests() {
+    colorTest();
     BenchRangeTest();
     ParseCommandLineTest();
     versioncheck_test();

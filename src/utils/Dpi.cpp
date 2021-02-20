@@ -1,8 +1,10 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
-#include "BaseUtil.h"
-#include "Dpi.h"
+#include "utils/BaseUtil.h"
+#include "utils/Dpi.h"
+#include "utils/WinDynCalls.h"
+#include "utils/ScopedWin.h"
 
 /* Info from https://code.msdn.microsoft.com/DPI-Tutorial-sample-64134744
 
@@ -33,30 +35,35 @@ Note: maybe I don't need keep a per-HWND cache and instead
 always call GetDpiXY() ?
 */
 
-struct DpiNode {
-    DpiNode* next;
-    Dpi dpi;
-};
+static HWND gLastHwndParent = nullptr;
+static HWND gLastHwnd = nullptr;
+static uint gLastDpi = 0;
 
-static DpiNode* g_dpis = nullptr;
+void DpiReset() {
+    gLastHwndParent = nullptr;
+    gLastHwnd = nullptr;
+    gLastDpi = 0;
+}
 
-class ScopedGetDC {
-    HDC hdc;
-    HWND hwnd;
-
-  public:
-    explicit ScopedGetDC(HWND hwnd) {
-        this->hwnd = hwnd;
-        this->hdc = GetDC(hwnd);
+// Uncached getting of dpi
+int DpiGetForHwnd(HWND hwnd) {
+    if (DynGetDpiForWindow) {
+        // HWND_DESKTOP is 0 and not really HWND
+        // GetDpiForWindow(HWND_DESKTOP) returns 0
+        if (hwnd == HWND_DESKTOP) {
+            hwnd = GetDesktopWindow();
+        }
+        uint dpi = DynGetDpiForWindow(hwnd);
+        // returns 0 for HWND_DESKTOP,
+        if (dpi > 0) {
+            CrashIf(dpi < 72);
+            return (int)dpi;
+        }
     }
-    ~ScopedGetDC() { ReleaseDC(hwnd, hdc); }
-    operator HDC() const { return hdc; }
-};
 
-static void GetDpiXY(HWND hwnd, int& scaleX, int& scaleY) {
 #if 0
     // TODO: only available in 8.1
-    UINT dpiX = 96, dpiY = 96;
+    uint dpiX = 96, dpiY = 96;
     HMONITOR h = MonitorFromWindow(hwnd, 0);
     if (h != nullptr ) {
         HRESULT hr = GetDpiForMonitor(h, 0 /* MDT_Effective_DPI */, &dpiX, &dpiY);
@@ -66,129 +73,63 @@ static void GetDpiXY(HWND hwnd, int& scaleX, int& scaleY) {
             return;
         }
 #endif
-    HDC dc = GetDC(hwnd);
-    scaleX = (UINT)GetDeviceCaps(dc, LOGPIXELSX);
-    scaleY = (UINT)GetDeviceCaps(dc, LOGPIXELSY);
-    ReleaseDC(hwnd, dc);
+
+    ScopedGetDC dc(hwnd);
+    int dpi = GetDeviceCaps(dc, LOGPIXELSX);
+    return dpi;
 }
 
-// return the top-level parent of hwnd or nullptr if hwnd is top-level
-static HWND GetTopLevelParent(HWND hwnd) {
-    HWND topLevel = hwnd;
-    while (GetParent(topLevel) != nullptr) {
-        topLevel = GetParent(topLevel);
+int DpiGet(HWND hwnd) {
+    if (hwnd == nullptr) {
+        hwnd = GetDesktopWindow();
+        CrashIf(!hwnd);
     }
-    if (topLevel == hwnd) {
-        return nullptr;
+    if (hwnd == gLastHwnd) {
+        CrashIf(gLastDpi == 0);
+        return gLastDpi;
     }
-    return topLevel;
-}
 
-static DpiNode* DpiNodeFindByHwnd(HWND hwnd) {
-    DpiNode* n = g_dpis;
-    while (n != nullptr) {
-        if (n->dpi.hwnd == hwnd) {
-            return n;
+    HWND hwndParent = hwnd;
+    // TODO: not sure if it's worth, perf-wise, to go up level
+    while (true) {
+        HWND p = GetParent(hwndParent);
+        if (p == nullptr) {
+            break;
         }
-        n = n->next;
+        hwndParent = p;
     }
-    return nullptr;
-}
-
-static Dpi* DpiFindByHwnd(HWND hwnd) {
-    DpiNode* n = DpiNodeFindByHwnd(hwnd);
-    if (n == nullptr) {
-        return nullptr;
+    if (hwndParent == gLastHwndParent) {
+        CrashIf(gLastDpi == 0);
+        return gLastDpi;
     }
-    return &n->dpi;
+
+    int dpi = DpiGetForHwnd(hwnd);
+    dpi = RoundUp(dpi, 4);
+    gLastDpi = dpi;
+    gLastHwnd = hwnd;
+    gLastHwndParent = hwndParent;
+    return dpi;
 }
 
-void DpiUpdate(Dpi* dpi) {
-    dpi->dpiX = 96;
-    dpi->dpiY = 96;
-    GetDpiXY(dpi->hwnd, dpi->dpiX, dpi->dpiY);
-    // round up unusual DPIs
-    dpi->dpiX = RoundUp(dpi->dpiX, 4);
-    dpi->dpiY = RoundUp(dpi->dpiY, 4);
+int DpiScale(HWND hwnd, int x) {
+    int dpi = DpiGet(hwnd);
+    int res = MulDiv(x, dpi, 96);
+    return res;
 }
 
-Dpi* DpiGet(HWND hwnd) {
-    Dpi* dpi = DpiFindByHwnd(hwnd);
-    if (nullptr != dpi) {
-        return dpi;
+void DpiScale(HWND hwnd, int& x1, int& x2) {
+    int dpi = DpiGet(hwnd);
+    int nx1 = MulDiv(x1, dpi, 96);
+    int nx2 = MulDiv(x2, dpi, 96);
+    x1 = nx1;
+    x2 = nx2;
+}
+
+int DpiScale(int x) {
+    int dpi = gLastDpi;
+    if (dpi == 0) {
+        HWND hwnd = GetDesktopWindow();
+        dpi = DpiGetForHwnd(hwnd);
     }
-    // try the parent
-    HWND topLevel = GetTopLevelParent(hwnd);
-    if (topLevel != nullptr) {
-        hwnd = topLevel;
-        dpi = DpiFindByHwnd(topLevel);
-        if (nullptr != dpi) {
-            return dpi;
-        }
-    }
-    // create if doesn't exist
-    DpiNode* n = AllocStruct<DpiNode>();
-    n->dpi.hwnd = hwnd;
-    DpiUpdate(&n->dpi);
-    n->next = g_dpis;
-    g_dpis = n;
-    return &n->dpi;
-}
-
-int DpiGetPreciseX(HWND hwnd) {
-    int dpiX, dpiY;
-    GetDpiXY(hwnd, dpiX, dpiY);
-    return dpiX;
-}
-
-int DpiGetPreciseY(HWND hwnd) {
-    int dpiX, dpiY;
-    GetDpiXY(hwnd, dpiX, dpiY);
-    return dpiY;
-}
-
-void DpiRemove(HWND hwnd) {
-    DpiNode* n = DpiNodeFindByHwnd(hwnd);
-    CrashIf(nullptr == n);
-    ListRemove(&g_dpis, n);
-    free(n);
-}
-
-void DpiRemoveAll() {
-    while (g_dpis != nullptr) {
-        DpiNode* n = g_dpis;
-        DpiRemove(n->dpi.hwnd);
-    }
-}
-
-int DpiScaleX(HWND hwnd, int x) {
-    return MulDiv(x, DpiGet(hwnd)->dpiX, 96);
-}
-
-int DpiScaleX(HDC hdc, int& x) {
-    auto dpiX = (UINT)GetDeviceCaps(hdc, LOGPIXELSX);
-    x = MulDiv(x, dpiX, 96);
-    return x;
-}
-
-void DpiScaleX2(HWND hwnd, int& x1, int& x2) {
-    ScopedGetDC hdc(hwnd);
-    auto dpiX = (UINT)GetDeviceCaps(hdc, LOGPIXELSX);
-    x1 = MulDiv(x1, dpiX, 96);
-    x2 = MulDiv(x2, dpiX, 96);
-}
-
-int DpiScaleY(HWND hwnd, int y) {
-    return MulDiv(y, DpiGet(hwnd)->dpiY, 96);
-}
-
-void DpiScaleY2(HWND hwnd, int& y1, int& y2) {
-    ScopedGetDC hdc(hwnd);
-    auto dpiY = (UINT)GetDeviceCaps(hdc, LOGPIXELSY);
-    y1 = MulDiv(y1, dpiY, 96);
-    y2 = MulDiv(y2, dpiY, 96);
-}
-
-void DpiUpdate(HWND hwnd) {
-    DpiUpdate(DpiGet(hwnd));
+    return MulDiv(x, dpi, 96);
 }

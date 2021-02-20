@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "BaseUtil.h"
@@ -53,8 +53,9 @@ static int GenUniqueThreadId() {
     return (int)InterlockedIncrement(&gThreadNoSeq);
 }
 
-ThreadBase::ThreadBase(const char* name)
-    : hThread(nullptr), cancelRequested(false), threadNo(GenUniqueThreadId()), threadName(str::Dup(name)) {
+ThreadBase::ThreadBase(const char* name) {
+    threadNo = GenUniqueThreadId();
+    threadName = str::Dup(name);
     // lf("ThreadBase() %d", threadNo);
 }
 
@@ -65,8 +66,9 @@ ThreadBase::~ThreadBase() {
 
 DWORD WINAPI ThreadBase::ThreadProc(void* data) {
     ThreadBase* thread = reinterpret_cast<ThreadBase*>(data);
-    if (thread->threadName)
+    if (thread->threadName) {
         SetThreadName(GetCurrentThreadId(), thread->threadName);
+    }
     thread->Run();
     return 0;
 }
@@ -95,5 +97,5 @@ static DWORD WINAPI ThreadFunc(void* data) {
 
 void RunAsync(const std::function<void()>& func) {
     auto fp = new std::function<void()>(func);
-    ScopedHandle h(CreateThread(nullptr, 0, ThreadFunc, fp, 0, 0));
+    AutoCloseHandle h(CreateThread(nullptr, 0, ThreadFunc, fp, 0, 0));
 }

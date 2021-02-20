@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #ifndef BaseUtil_h
@@ -23,6 +23,22 @@
 #else
 #define OS_WIN 0
 #endif
+
+#if defined(_M_IX86) || defined(__i386__)
+#define IS_32BIT 1
+#define IS_INTEL_32 1
+#define IS_64BIT 0
+#define IS_INTEL_64 0
+#endif
+
+#if defined(_M_X64) || defined(__x86_64__)
+#define IS_64BIT 1
+#define IS_INTEL_64 1
+#define IS_32BIT 0
+#define IS_INTEL_32 0
+#endif
+
+// TODO: ARM 64bit
 
 /* OS_UNIX - Any Unix-like system */
 #if OS_DARWIN || OS_LINUX || defined(unix) || defined(__unix) || defined(__unix__)
@@ -57,9 +73,10 @@
 #ifndef UNICODE
 #define UNICODE
 #endif
-#ifndef _UNICODE
-#define _UNICODE
 #endif
+
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
 #endif
 
 #include "BuildConfig.h"
@@ -87,17 +104,7 @@
 #undef max
 
 #include <io.h>
-
-#ifdef DEBUG
-#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
-// TODO: this breaks placement new but without this we
-// don't get leaked memory allocation source
-#define DEBUG_NEW new (_NORMAL_BLOCK, __FILE__, __LINE__)
-#define new DEBUG_NEW
-#endif
-
-#endif
+#endif // OS_WIN
 
 // Most common C includes
 #include <stdlib.h>
@@ -125,10 +132,19 @@
 #include <array>
 #include <vector>
 #include <limits>
+#include <span>
 //#include <iostream>
 //#include <locale>
 
+typedef int8_t i8;
 typedef uint8_t u8;
+typedef int16_t i16;
+typedef uint16_t u16;
+typedef int32_t i32;
+typedef uint32_t u32;
+typedef int64_t i64;
+typedef uint64_t u64;
+typedef unsigned int uint;
 
 // TODO: don't use INT_MAX and UINT_MAX
 #ifndef INT_MAX
@@ -153,18 +169,6 @@ char (&DimofSizeHelper(T (&array)[N]))[N];
 
 // like dimof minus 1 to account for terminating 0
 #define static_strlen(array) (sizeof(DimofSizeHelper(array)) - 1)
-
-// UNUSED is for marking unreferenced function arguments/variables
-// UNREFERENCED_PARAMETER is in windows SDK but too long. We use it if available,
-// otherwise we define our own version.
-// UNUSED might already be defined by mupdf\fits\system.h
-#if !defined(UNUSED)
-#if defined(UNREFERENCED_PARAMETER)
-#define UNUSED UNREFERENCED_PARAMETER
-#else
-#define UNUSED(P) ((void)P)
-#endif
-#endif
 
 #if COMPILER_MSVC
 // https://msdn.microsoft.com/en-us/library/4dt9kyhy.aspx
@@ -191,7 +195,8 @@ char (&DimofSizeHelper(T (&array)[N]))[N];
 // but it seemed to confuse callstack walking
 inline void CrashMe() {
     char* p = nullptr;
-    *p = 0;
+    // cppcheck-suppress nullPointer
+    *p = 0; // NOLINT
 }
 #if COMPILER_MSVC
 #pragma warning(pop)
@@ -216,30 +221,40 @@ inline void CrashMe() {
 // in some builds, so it shouldn't contain the actual logic of the code
 
 inline void CrashIfFunc(bool cond) {
-#if defined(SVN_PRE_RELEASE_VER) || defined(DEBUG)
-    if (cond) {
-        CrashMe();
+    if (!cond) {
+        return;
     }
-#else
-    UNUSED(cond);
+#if defined(PRE_RELEASE_VER) || defined(DEBUG)
+    CrashMe();
+#endif
+}
+
+// must be provided somewhere else
+// could be a dummy implementation
+// For sumatra, it's in CrashHandler.cpp
+extern void SendCrashReport(const char*);
+
+inline void SendCrashIfFunc(bool cond, [[maybe_unused]] const char* condStr) {
+    if (!cond) {
+        return;
+    }
+#if defined(PRE_RELEASE_VER) || defined(DEBUG)
+    SendCrashReport(condStr);
 #endif
 }
 
 // Sometimes we want to assert only in debug build (not in pre-release)
-inline void CrashIfDebugOnlyFunc(bool cond) {
 #if defined(DEBUG)
-    if (cond) {
-        CrashMe();
+inline void DebugCrashIfFunc(bool cond) {
+    if (!cond) {
+        return;
     }
-#else
-    UNUSED(cond);
-#endif
+    CrashMe();
 }
-
-#if COMPILER_MSVC
-#define while_0_nowarn __pragma(warning(push)) __pragma(warning(disable : 4127)) while (0) __pragma(warning(pop))
 #else
-#define while_0_nowarn while (0)
+inline void DebugCrashIfFunc(bool) {
+    // no-op
+}
 #endif
 
 // __analysis_assume is defined by msvc for prefast analysis
@@ -247,12 +262,11 @@ inline void CrashIfDebugOnlyFunc(bool cond) {
 #define __analysis_assume(x)
 #endif
 
-#define CrashIfDebugOnly(cond)      \
+#define DebugCrashIf(cond)          \
     do {                            \
         __analysis_assume(!(cond)); \
-        CrashIfDebugOnlyFunc(cond); \
-    }                               \
-    while_0_nowarn
+        DebugCrashIfFunc(cond);     \
+    } while (0)
 
 #define CrashAlwaysIf(cond)         \
     do {                            \
@@ -260,38 +274,34 @@ inline void CrashIfDebugOnlyFunc(bool cond) {
         if (cond) {                 \
             CrashMe();              \
         }                           \
-    }                               \
-    while_0_nowarn
+    } while (0)
 
 #define CrashIf(cond)               \
     do {                            \
         __analysis_assume(!(cond)); \
         CrashIfFunc(cond);          \
-    }                               \
-    while_0_nowarn
+    } while (0)
 
-// AssertCrash is like assert() but crashes like CrashIf()
-// It's meant to make converting assert() easier (converting to
-// CrashIf() requires inverting the condition, which can introduce bugs)
-#define AssertCrash(cond)        \
-    do {                         \
-        __analysis_assume(cond); \
-        CrashIfFunc(!(cond));    \
-    }                            \
-    while_0_nowarn
+#define SubmitCrashIf(cond)           \
+    do {                              \
+        __analysis_assume(!(cond));   \
+        SendCrashIfFunc(cond, #cond); \
+    } while (0)
 
 #if !OS_WIN
 void ZeroMemory(void* p, size_t len);
 #endif
 
+void* AllocZero(size_t count, size_t size);
+
 template <typename T>
-inline T* AllocArray(size_t n) {
-    return (T*)calloc(n, sizeof(T));
+FORCEINLINE T* AllocArray(size_t n) {
+    return (T*)AllocZero(n, sizeof(T));
 }
 
 template <typename T>
-inline T* AllocStruct() {
-    return (T*)calloc(1, sizeof(T));
+FORCEINLINE T* AllocStruct() {
+    return (T*)AllocZero(1, sizeof(T));
 }
 
 template <typename T>
@@ -307,18 +317,20 @@ inline void ZeroArray(T& a) {
 
 template <typename T>
 inline T limitValue(T val, T min, T max) {
-    CrashIf(min > max);
-    if (val < min)
+    DebugCrashIf(min > max);
+    if (val < min) {
         return min;
-    if (val > max)
+    }
+    if (val > max) {
         return max;
+    }
     return val;
 }
 
 // return true if adding n to val overflows. Only valid for n > 0
 template <typename T>
 inline bool addOverflows(T val, T n) {
-    CrashIf(n <= 0);
+    CrashIf(!(n > 0));
     T res = val + n;
     return val > res;
 }
@@ -327,10 +339,11 @@ void* memdup(const void* data, size_t len);
 bool memeq(const void* s1, const void* s2, size_t len);
 
 size_t RoundToPowerOf2(size_t size);
-uint32_t MurmurHash2(const void* key, size_t len);
+u32 MurmurHash2(const void* key, size_t len);
 
 size_t RoundUp(size_t n, size_t rounding);
 int RoundUp(int n, int rounding);
+char* RoundUp(char*, int rounding);
 
 template <typename T>
 void ListInsert(T** root, T* el) {
@@ -344,10 +357,12 @@ bool ListRemove(T** root, T* el) {
     T* curr;
     for (;;) {
         curr = *currPtr;
-        if (!curr)
+        if (!curr) {
             return false;
-        if (curr == el)
+        }
+        if (curr == el) {
             break;
+        }
         currPtr = &(curr->next);
     }
     *currPtr = el->next;
@@ -357,13 +372,13 @@ bool ListRemove(T** root, T* el) {
 // Base class for allocators that can be provided to Vec class
 // (and potentially others). Needed because e.g. in crash handler
 // we want to use Vec but not use standard malloc()/free() functions
-class Allocator {
-  public:
-    Allocator() {}
+struct Allocator {
+    Allocator() {
+    }
     virtual ~Allocator(){};
     virtual void* Alloc(size_t size) = 0;
     virtual void* Realloc(void* mem, size_t size) = 0;
-    virtual void Free(void* mem) = 0;
+    virtual void Free(const void* mem) = 0;
 
     // helper functions that fallback to malloc()/free() if allocator is nullptr
     // helps write clients where allocator is optional
@@ -395,44 +410,44 @@ class Allocator {
 //
 // Note: we could be a bit more clever here by allocating data in 4K chunks
 // via VirtualAlloc() etc. instead of malloc(), which would lower the overhead
-class PoolAllocator : public Allocator {
+struct PoolAllocator : Allocator {
     // we'll allocate block of the minBlockSize unless
     // asked for a block of bigger size
-    size_t minBlockSize = 4096;
-    size_t allocRounding = 8;
+    int minBlockSize = 4096;
+    // alignment of allocations, must be 2^N or <= 1 to disable
+    // We might apply padding so that allocated memory starts at
+    // multiply of allocAlign. This is sometimes needed to satisfy ABI
+    // requirements or to ensure CPU operations (like SSE) are fast
+    int allocAlign = 8;
 
-    struct MemBlockNode {
-        struct MemBlockNode* next;
-        size_t size;
-        size_t free;
-
-        size_t Used() { return size - free; }
-        char* DataStart() { return (char*)this + sizeof(MemBlockNode); }
+    // contains allocated data and index of each allocation
+    struct Block {
+        struct Block* next;
+        int dataSize; // for debugging, not used
+        int nAllocs;
+        char* curr;
+        // from the end, we store index of each allocation relative
+        // to start of the block. <end> points at the current
+        // reverse end of i32 array of indexes
+        char* end;
         // data follows here
     };
 
-    MemBlockNode* currBlock = nullptr;
-    MemBlockNode* firstBlock = nullptr;
+    Block* currBlock = nullptr;
+    Block* firstBlock = nullptr;
+    int nAllocs = 0;
 
-  public:
-    explicit PoolAllocator() {}
-
-    void SetMinBlockSize(size_t newMinBlockSize);
-    void SetAllocRounding(size_t newRounding);
-    void FreeAll();
-    virtual ~PoolAllocator() override;
-    void AllocBlock(size_t minSize);
+    PoolAllocator() = default;
 
     // Allocator methods
-    virtual void* Realloc(void* mem, size_t size) override;
+    ~PoolAllocator() override;
+    void* Realloc(void* mem, size_t size) override;
+    void Free(const void*) override;
+    void* Alloc(size_t size) override;
 
-    virtual void Free(void*) override {
-        // does nothing, we can't free individual pieces of memory
-    }
-
-    virtual void* Alloc(size_t size) override;
-
-    void* FindNthPieceOfSize(size_t size, size_t n) const;
+    void FreeAll();
+    void Reset();
+    void* At(int i);
 
     // only valid for structs, could alloc objects with
     // placement new()
@@ -447,36 +462,61 @@ class PoolAllocator : public Allocator {
     // cf. http://www.cprogramming.com/c++11/c++11-ranged-for-loop.html
     template <typename T>
     class Iter {
-        MemBlockNode* block;
-        size_t blockPos;
+        PoolAllocator* self;
+        int idx;
 
       public:
-        Iter(MemBlockNode* block) : block(block), blockPos(0) {
-            CrashIf(block && (block->Used() % sizeof(T)) != 0);
-            CrashIf(block && block->Used() == 0);
+        // TODO: can make it more efficient
+        Iter(PoolAllocator* a, int startIdx) {
+            self = a;
+            idx = startIdx;
         }
 
-        bool operator!=(const Iter& other) const { return block != other.block || blockPos != other.blockPos; }
-        T& operator*() const { return *(T*)(block->DataStart() + blockPos); }
+        bool operator!=(const Iter& other) const {
+            return idx != other.idx;
+        }
+
+        T* operator*() const {
+            return (T*)self->At(idx);
+        }
+
         Iter& operator++() {
-            blockPos += sizeof(T);
-            if (block->Used() == blockPos) {
-                block = block->next;
-                blockPos = 0;
-                CrashIf(block && block->Used() == 0);
-            }
+            idx += 1;
             return *this;
         }
     };
 
     template <typename T>
     Iter<T> begin() {
-        return Iter<T>(firstBlock);
+        return Iter<T>(this, 0);
     }
     template <typename T>
     Iter<T> end() {
-        return Iter<T>(nullptr);
+        return Iter<T>(this, nAllocs);
     }
+};
+
+struct HeapAllocator : Allocator {
+    HANDLE allocHeap = nullptr;
+
+    HeapAllocator(size_t initialSize = 128 * 1024) {
+        allocHeap = HeapCreate(0, initialSize, 0);
+    }
+    ~HeapAllocator() override {
+        HeapDestroy(allocHeap);
+    }
+    void* Alloc(size_t size) override {
+        return HeapAlloc(allocHeap, 0, size);
+    }
+    void* Realloc(void* mem, size_t size) override {
+        return HeapReAlloc(allocHeap, 0, mem, size);
+    }
+    void Free(const void* mem) override {
+        HeapFree(allocHeap, 0, (void*)mem);
+    }
+
+    HeapAllocator(const HeapAllocator&) = delete;
+    HeapAllocator& operator=(const HeapAllocator&) = delete;
 };
 
 // A helper for allocating an array of elements of type T
@@ -492,75 +532,51 @@ class FixedArray {
     explicit FixedArray(size_t elCount) {
         memBuf = nullptr;
         size_t stackEls = StackBufInBytes / sizeof(T);
-        if (elCount > stackEls)
+        if (elCount > stackEls) {
             memBuf = (T*)malloc(elCount * sizeof(T));
+        }
     }
 
-    ~FixedArray() { free(memBuf); }
+    ~FixedArray() {
+        free(memBuf);
+    }
 
     T* Get() {
-        if (memBuf)
+        if (memBuf) {
             return memBuf;
+        }
         return &(stackBuf[0]);
     }
 };
 
-// OwnedData is for returning data. It combines pointer to data and size.
-// It owns the data i.e. frees it in destructor.
-// It cannot be copied, only moved, so that it's clear that ownership of
-// data is being passed.
-class OwnedData {
-  public:
-    char* data = nullptr;
-    size_t size = 0;
+static inline std::span<u8> ToSpan(std::string_view d) {
+    return {(u8*)d.data(), d.size()};
+}
 
-    OwnedData() {}
-    // takes ownership of data
-    OwnedData(const char* data, size_t size = 0);
-    ~OwnedData();
+/*
+Poor-man's manual dynamic typing.
+Identity of an object is an address of a unique, global string.
+String is good for debugging
 
-    OwnedData(const OwnedData& other) = delete;
-    OwnedData& operator=(const OwnedData& other) = delete;
+For classes / structs that we want to query for type at runtime, we add:
 
-    OwnedData& operator=(OwnedData&& other);
-    OwnedData(OwnedData&& other);
-
-    bool IsEmpty();
-    void Clear();
-    void TakeOwnership(const char* s, size_t size = 0);
-    char* StealData();
-    char* Get() const;
-    std::string_view AsView() const;
-
-    // creates a copy of s
-    static OwnedData MakeFromStr(const char* s, size_t size = 0);
+// in foo.h
+struct Foo {
+    Kind kind;
 };
 
-// MaybeOwnedData is for returning data that might be owned by this class.
-// It combines pointer to data and size.
-// It owns the data i.e. frees it in destructor.
-// It cannot be copied, only moved, so that it's clear that ownership of
-// data is being passed.
-class MaybeOwnedData {
-  public:
-    char* data = nullptr;
-    size_t size = 0;
-    bool isOwned = false;
+extern Kind kindFoo;
 
-    MaybeOwnedData(){};
-    MaybeOwnedData(char* data, size_t size, bool isOwned);
-    ~MaybeOwnedData();
+// in foo.cpp
+Kind kindFoo = "foo";
+*/
 
-    MaybeOwnedData(const MaybeOwnedData& other) = delete;
-    MaybeOwnedData& operator=(const MaybeOwnedData& other) = delete;
+typedef const char* Kind;
+inline bool isOfKindHelper(Kind k1, Kind k2) {
+    return k1 == k2;
+}
 
-    MaybeOwnedData& operator=(MaybeOwnedData&& other);
-    MaybeOwnedData(MaybeOwnedData&& other);
-
-    void Set(char* s, size_t len, bool isOwned);
-    void freeIfOwned();
-    OwnedData StealData();
-};
+#define IsOfKind(o, wantedKind) (o && isOfKindHelper(o->kind, wantedKind))
 
 // from https://pastebin.com/3YvWQa5c
 // In my testing, in debug build defer { } creates somewhat bloated code
@@ -571,8 +587,11 @@ class MaybeOwnedData {
 template <typename T>
 struct ExitScope {
     T lambda;
-    ExitScope(T lambda) : lambda(lambda) {}
-    ~ExitScope() { lambda(); }
+    ExitScope(T lambda) : lambda(lambda) {
+    }
+    ~ExitScope() {
+        lambda();
+    }
     ExitScope(const ExitScope&);
 
   private:
@@ -589,6 +608,8 @@ class ExitScopeHelp {
 
 #define defer const auto& CONCAT(defer__, __LINE__) = ExitScopeHelp() + [&]()
 
+extern std::atomic<int> gAllowAllocFailure;
+
 /* How to use:
 defer { free(tools_filename); };
 defer { fclose(f); };
@@ -597,25 +618,13 @@ defer { instance->Release(); };
 
 #include "GeomUtil.h"
 #include "StrUtil.h"
+#include "StrconvUtil.h"
 #include "Scoped.h"
 #include "Vec.h"
+#include "StringViewUtil.h"
+#include "ColorUtil.h"
 
-#if OS_WIN
-/* In debug mode, VS 2010 instrumentations complains about GetRValue() etc.
-This adds equivalent functions that don't have this problem and ugly
-substitutions to make sure we don't use Get*Value() in the future */
-BYTE GetRValueSafe(COLORREF rgb);
-BYTE GetGValueSafe(COLORREF rgb);
-BYTE GetBValueSafe(COLORREF rgb);
-
-#undef GetRValue
-#define GetRValue UseGetRValueSafeInstead
-#undef GetGValue
-#define GetGValue UseGetGValueSafeInstead
-#undef GetBValue
-#define GetBValue UseGetBValueSafeInstead
-#endif
-
+// lstrcpy is dangerous so forbid using it
 #ifdef lstrcpy
 #undef lstrcpy
 #define lstrcpy dont_use_lstrcpy

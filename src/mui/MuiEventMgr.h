@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 class HwndWrapper;
@@ -50,7 +50,7 @@ class EventMgr {
     EventMgr(HwndWrapper* wndRoot);
     ~EventMgr();
 
-    LRESULT OnMessage(UINT msg, WPARAM wParam, LPARAM lParam, bool& handledOut);
+    LRESULT OnMessage(UINT msg, WPARAM wp, LPARAM lp, bool& handledOut);
 
     ControlEvents* EventsForControl(Control* c);
     NamedEvents* EventsForName(const char* name);
@@ -61,7 +61,9 @@ class EventMgr {
     void NotifySizeChanged(Control* c, int dx, int dy);
     void NotifyNamedEventClicked(Control* c, int x, int y);
 
-    bool IsInSizeMove() const { return inSizeMove; }
+    bool IsInSizeMove() const {
+        return inSizeMove;
+    }
 
     void SetMinSize(Size s);
     void SetMaxSize(Size s);

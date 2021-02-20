@@ -1,8 +1,11 @@
-
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 // note: include BaseUtil.h instead of including directly
+
+#define UTF8_BOM "\xEF\xBB\xBF"
+#define UTF16_BOM "\xFF\xFE"
+#define UTF16BE_BOM "\xFE\xFF"
 
 bool isLegalUTF8Sequence(const u8* source, const u8* sourceEnd);
 bool isLegalUTF8String(const u8** source, const u8* sourceEnd);
@@ -21,130 +24,92 @@ char* Join(const char* s1, const char* s2, const char* s3 = nullptr);
 char* Join(const char* s1, const char* s2, const char* s3, Allocator* allocator);
 
 bool Eq(const char* s1, const char* s2);
+bool Eq(std::string_view s1, const char* s2);
+bool Eq(std::span<u8> sp1, std::span<u8> sp2);
 bool EqI(const char* s1, const char* s2);
+bool EqI(std::string_view s1, const char* s2);
 bool EqIS(const char* s1, const char* s2);
 bool EqN(const char* s1, const char* s2, size_t len);
 bool EqNI(const char* s1, const char* s2, size_t len);
-
-template <typename T>
-inline bool IsEmpty(T* s) {
-    return !s || (0 == *s);
-}
+bool IsEmpty(const char* s);
+bool StartsWith(const char* str, const char* prefix);
+bool StartsWith(const u8* str, const char* prefix);
+bool StartsWith(std::string_view s, const char* prefix);
+std::span<u8> ToSpan(const char* s);
 
 #if OS_WIN
-size_t Len(const WCHAR* s);
-WCHAR* Dup(const WCHAR* s);
+size_t Len(const WCHAR*);
+WCHAR* Dup(const WCHAR*);
 void ReplacePtr(WCHAR** s, const WCHAR* snew);
-WCHAR* Join(const WCHAR* s1, const WCHAR* s2, const WCHAR* s3 = nullptr);
-bool Eq(const WCHAR* s1, const WCHAR* s2);
-bool EqI(const WCHAR* s1, const WCHAR* s2);
-bool EqIS(const WCHAR* s1, const WCHAR* s2);
-bool EqN(const WCHAR* s1, const WCHAR* s2, size_t len);
-bool EqNI(const WCHAR* s1, const WCHAR* s2, size_t len);
+WCHAR* Join(const WCHAR*, const WCHAR*, const WCHAR* s3 = nullptr);
+bool Eq(const WCHAR*, const WCHAR*);
+bool EqI(const WCHAR*, const WCHAR*);
+bool EqIS(const WCHAR*, const WCHAR*);
+bool EqN(const WCHAR*, const WCHAR*, size_t);
+bool EqNI(const WCHAR*, const WCHAR*, size_t);
+bool IsEmpty(const WCHAR*);
+bool StartsWith(const WCHAR* str, const WCHAR* prefix);
 #endif
 
-template <typename T>
-inline bool StartsWith(const T* str, const T* txt) {
-    return EqN(str, txt, Len(txt));
-}
-
-bool StartsWithI(const char* str, const char* txt);
+bool StartsWithI(const char* str, const char* prefix);
 bool EndsWith(const char* txt, const char* end);
 bool EndsWithI(const char* txt, const char* end);
-
-inline bool EqNIx(const char* s, size_t len, const char* s2) {
-    return str::Len(s2) == len && str::StartsWithI(s, s2);
-}
+bool EqNIx(const char* s, size_t len, const char* s2);
 
 char* DupN(const char* s, size_t lenCch);
-char* ToLowerInPlace(char* s);
+char* Dup(const std::string_view);
+char* DupN(const std::span<u8> d);
+char* ToLowerInPlace(char*);
+char* ToLower(const char*);
 
-inline void Free(const char* s) {
-    free((void*)s);
-}
+void Free(const char*);
+void Free(const u8*);
 
 #if OS_WIN
 bool StartsWithI(const WCHAR* str, const WCHAR* txt);
 bool EndsWith(const WCHAR* txt, const WCHAR* end);
 bool EndsWithI(const WCHAR* txt, const WCHAR* end);
 WCHAR* DupN(const WCHAR* s, size_t lenCch);
-inline void Free(const WCHAR* s) {
-    free((void*)s);
-}
+void Free(const WCHAR* s);
+void FreePtr(const WCHAR** s);
 WCHAR* ToLowerInPlace(WCHAR* s);
+WCHAR* ToLower(const WCHAR* s);
 
-OwnedData ToMultiByte(const WCHAR* txt, UINT CodePage, int cchTxtLen = -1);
-OwnedData ToMultiByte(const char* src, UINT CodePageSrc, UINT CodePageDest);
-WCHAR* ToWideChar(const char* src, UINT CodePage, int cbSrcLen = -1);
 void Utf8Encode(char*& dst, int c);
 #endif
 
-inline const char* FindChar(const char* str, const char c) {
-    return strchr(str, c);
-}
-inline char* FindChar(char* str, const char c) {
-    return strchr(str, c);
-}
+bool IsDigit(char c);
+bool IsWs(char c);
+bool IsAlNum(char c);
 
-inline const char* FindCharLast(const char* str, const char c) {
-    return strrchr(str, c);
-}
-inline char* FindCharLast(char* str, const char c) {
-    return strrchr(str, c);
-}
-
-inline const char* Find(const char* str, const char* find) {
-    return strstr(str, find);
-}
-
+const char* FindChar(const char* str, char c);
+char* FindChar(char* str, char c);
+const char* FindCharLast(const char* str, char c);
+char* FindCharLast(char* str, char c);
+const char* Find(const char* str, const char* find);
 const char* FindI(const char* str, const char* find);
+
+bool Contains(std::string_view s, const char* txt);
+
 bool BufFmtV(char* buf, size_t bufCchSize, const char* fmt, va_list args);
 char* FmtV(const char* fmt, va_list args);
 char* Format(const char* fmt, ...);
 
-inline bool IsWs(char c) {
-    return (' ' == c) || (('\t' <= c) && (c <= '\r'));
-}
-
-// Note: I tried an optimization: return (unsigned)(c - '0') < 10;
-// but it seems to mis-compile in release builds
-inline bool IsDigit(char c) {
-    return ('0' <= c) && (c <= '9');
-}
-
 #if OS_WIN
-inline const WCHAR* FindChar(const WCHAR* str, const WCHAR c) {
-    return wcschr(str, c);
-}
-inline WCHAR* FindChar(WCHAR* str, const WCHAR c) {
-    return wcschr(str, c);
-}
-inline const WCHAR* FindCharLast(const WCHAR* str, const WCHAR c) {
-    return wcsrchr(str, c);
-}
-inline WCHAR* FindCharLast(WCHAR* str, const WCHAR c) {
-    return wcsrchr(str, c);
-}
-inline const WCHAR* Find(const WCHAR* str, const WCHAR* find) {
-    return wcsstr(str, find);
-}
+const WCHAR* FindChar(const WCHAR* str, WCHAR c);
+WCHAR* FindChar(WCHAR* str, WCHAR c);
+const WCHAR* FindCharLast(const WCHAR* str, WCHAR c);
+WCHAR* FindCharLast(WCHAR* str, WCHAR c);
+const WCHAR* Find(const WCHAR* str, const WCHAR* find);
 
 const WCHAR* FindI(const WCHAR* str, const WCHAR* find);
 bool BufFmtV(WCHAR* buf, size_t bufCchSize, const WCHAR* fmt, va_list args);
 WCHAR* FmtV(const WCHAR* fmt, va_list args);
 WCHAR* Format(const WCHAR* fmt, ...);
 
-inline bool IsWs(WCHAR c) {
-    return iswspace(c);
-}
-
-inline bool IsDigit(WCHAR c) {
-    return ('0' <= c) && (c <= '9');
-}
-
-inline bool IsNonCharacter(WCHAR c) {
-    return c >= 0xFFFE || (c & ~1) == 0xDFFE || (0xFDD0 <= c && c <= 0xFDEF);
-}
+bool IsWs(WCHAR c);
+bool IsDigit(WCHAR c);
+bool IsNonCharacter(WCHAR c);
 
 size_t TrimWS(WCHAR* s, TrimOpt opt);
 #endif
@@ -163,8 +128,8 @@ size_t RemoveChars(char* str, const char* toRemove);
 size_t BufSet(char* dst, size_t dstCchSize, const char* src);
 size_t BufAppend(char* dst, size_t dstCchSize, const char* s);
 
-char* MemToHex(const unsigned char* buf, size_t len);
-bool HexToMem(const char* s, unsigned char* buf, size_t bufLen);
+char* MemToHex(const u8* buf, size_t len);
+bool HexToMem(const char* s, u8* buf, size_t bufLen);
 
 const char* Parse(const char* str, const char* format, ...);
 const char* Parse(const char* str, size_t len, const char* format, ...);
@@ -186,55 +151,9 @@ WCHAR* FormatRomanNumeral(int number);
 int CmpNatural(const WCHAR*, const WCHAR*);
 
 const WCHAR* Parse(const WCHAR* str, const WCHAR* format, ...);
-
-size_t Utf8ToWcharBuf(const char* s, size_t sLen, WCHAR* bufOut, size_t cchBufOutSize);
-size_t WcharToUtf8Buf(const WCHAR* s, char* bufOut, size_t cbBufOutSize);
-#endif
-
-namespace conv {
-
-MaybeOwnedData UnknownToUtf8(const std::string_view&);
-
-#if OS_WIN
-inline WCHAR* FromCodePage(const char* src, UINT cp) {
-    return ToWideChar(src, cp);
-}
-
-inline OwnedData ToCodePage(const WCHAR* src, UINT cp) {
-    return ToMultiByte(src, cp);
-}
-
-inline WCHAR* FromUtf8(const char* src, size_t cbSrcLen) {
-    return ToWideChar(src, CP_UTF8, (int)cbSrcLen);
-}
-
-inline WCHAR* FromUtf8(const char* src) {
-    return ToWideChar(src, CP_UTF8);
-}
-
-inline OwnedData ToUtf8(const WCHAR* src, size_t cchSrcLen) {
-    return ToMultiByte(src, CP_UTF8, (int)cchSrcLen);
-}
-
-inline OwnedData ToUtf8(const WCHAR* src) {
-    return ToMultiByte(src, CP_UTF8);
-}
-
-inline WCHAR* FromAnsi(const char* src, size_t cbSrcLen = (size_t)-1) {
-    return ToWideChar(src, CP_ACP, (int)cbSrcLen);
-}
-
-inline OwnedData ToAnsi(const WCHAR* src) {
-    return ToMultiByte(src, CP_ACP);
-}
-
-size_t ToCodePageBuf(char* buf, int cbBufSize, const WCHAR* s, UINT cp);
-size_t FromCodePageBuf(WCHAR* buf, int cchBufSize, const char* s, UINT cp);
+bool IsStringEmptyOrWhiteSpaceOnly(std::string_view sv);
 
 #endif
-
-} // namespace conv
-
 } // namespace str
 
 namespace url {
@@ -251,20 +170,177 @@ WCHAR* GetFileName(const WCHAR* url);
 } // namespace url
 
 namespace seqstrings {
-bool SkipStr(char*& s);
-bool SkipStr(const char*& s);
-int StrToIdx(const char* strings, const char* toFind);
-const char* IdxToStr(const char* strings, int idx);
+char* SkipStr(char* s);
+const char* SkipStr(const char* s);
+int StrToIdx(const char* strs, const char* toFind);
+int StrToIdxIS(const char* strs, const char* toFind);
+const char* IdxToStr(const char* strs, int idx);
 
 #if OS_WIN
-bool SkipStr(const WCHAR*& s);
-int StrToIdx(const char* strings, const WCHAR* toFind);
+int StrToIdx(const char* strs, const WCHAR* toFind);
+const WCHAR* IdxToStr(const WCHAR* strs, int idx);
 #endif
 } // namespace seqstrings
 
-#define _MemToHex(ptr) str::MemToHex((const unsigned char*)(ptr), sizeof(*ptr))
-#define _HexToMem(txt, ptr) str::HexToMem(txt, (unsigned char*)(ptr), sizeof(*ptr))
+#define _MemToHex(ptr) str::MemToHex((const u8*)(ptr), sizeof(*ptr))
+#define _HexToMem(txt, ptr) str::HexToMem(txt, (u8*)(ptr), sizeof(*ptr))
 
-#define UTF8_BOM "\xEF\xBB\xBF"
-#define UTF16_BOM "\xFF\xFE"
-#define UTF16BE_BOM "\xFE\xFF"
+namespace str {
+struct Str {
+    // allocator is not owned by Vec and must outlive it
+    Allocator* allocator{nullptr};
+    // TODO: to save space (8 bytes), combine els and buf?
+    char* els{nullptr};
+    u32 len{0};
+    u32 cap{0};
+    char buf[32];
+
+#if defined(DEBUG)
+    int nReallocs{0};
+#endif
+
+    static constexpr size_t kBufChars = dimof(buf);
+
+    explicit Str(size_t capHint = 0, Allocator* allocator = nullptr);
+    Str(const Str& orig);
+    Str(std::string_view s);
+    Str& operator=(const Str& that);
+    ~Str();
+    void Reset();
+    [[nodiscard]] char& at(size_t idx) const;
+    [[nodiscard]] char& at(int idx) const;
+    [[nodiscard]] char& operator[](size_t idx) const;
+    [[nodiscard]] char& operator[](long idx) const;
+    [[nodiscard]] char& operator[](ULONG idx) const;
+    [[nodiscard]] char& operator[](int idx) const;
+#if defined(_WIN64)
+    [[nodiscard]] char& at(u32 idx) const;
+    [[nodiscard]] char& operator[](u32 idx) const;
+#endif
+    [[nodiscard]] size_t size() const;
+    [[nodiscard]] int isize() const;
+    bool InsertAt(size_t idx, char el);
+    bool Append(char el);
+    bool Append(const char* src, size_t count = -1);
+    char RemoveAt(size_t idx, size_t count = 1);
+    char RemoveLast();
+    [[nodiscard]] char& Last() const;
+    [[nodiscard]] char* StealData();
+    [[nodiscard]] char* LendData() const;
+    [[nodiscard]] int Find(char el, size_t startAt = 0) const;
+    [[nodiscard]] bool Contains(char el) const;
+    int Remove(char el);
+    void Reverse();
+    char& FindEl(const std::function<bool(char&)>& check);
+    [[nodiscard]] bool IsEmpty() const;
+    std::string_view AsView() const;
+    std::span<u8> AsSpan() const;
+    std::string_view StealAsView();
+    std::span<u8> StealAsSpan();
+    bool AppendChar(char c);
+    bool Append(const u8* src, size_t size = -1);
+    bool AppendView(const std::string_view sv);
+    bool AppendSpan(std::span<u8> d);
+    void AppendFmt(const char* fmt, ...);
+    bool AppendAndFree(const char* s);
+    bool Replace(const char* toReplace, const char* replaceWith);
+    void Set(std::string_view sv);
+    char* Get() const;
+    char LastChar() const;
+
+    // http://www.cprogramming.com/c++11/c++11-ranged-for-loop.html
+    // https://stackoverflow.com/questions/16504062/how-to-make-the-for-each-loop-function-in-c-work-with-a-custom-class
+    typedef char* iterator;
+    typedef const char* const_iterator;
+
+    iterator begin() {
+        return &(els[0]);
+    }
+    const_iterator begin() const {
+        return &(els[0]);
+    }
+    iterator end() {
+        return &(els[len]);
+    }
+    const_iterator end() const {
+        return &(els[len]);
+    }
+};
+
+struct WStr {
+    // allocator is not owned by Vec and must outlive it
+    Allocator* allocator{nullptr};
+    WCHAR* els{nullptr};
+    u32 len{0};
+    u32 cap{0};
+    WCHAR buf[32];
+
+    static constexpr size_t kBufChars = dimof(buf);
+    static constexpr size_t kElSize = sizeof(WCHAR);
+
+    explicit WStr(size_t capHint = 0, Allocator* allocator = nullptr);
+    WStr(const WStr&);
+    WStr(std::wstring_view);
+    WStr(const WCHAR*);
+    WStr& operator=(const WStr& that);
+    ~WStr();
+    void Reset();
+    [[nodiscard]] WCHAR& at(size_t idx) const;
+    [[nodiscard]] WCHAR& at(int idx) const;
+    [[nodiscard]] WCHAR& operator[](size_t idx) const;
+    [[nodiscard]] WCHAR& operator[](long idx) const;
+    [[nodiscard]] WCHAR& operator[](ULONG idx) const;
+    [[nodiscard]] WCHAR& operator[](int idx) const;
+#if defined(_WIN64)
+    [[nodiscard]] WCHAR& at(u32 idx) const;
+    [[nodiscard]] WCHAR& operator[](u32 idx) const;
+#endif
+    [[nodiscard]] size_t size() const;
+    [[nodiscard]] int isize() const;
+    bool InsertAt(size_t idx, const WCHAR& el);
+    bool Append(const WCHAR& el);
+    bool Append(const WCHAR* src, size_t count = -1);
+    WCHAR RemoveAt(size_t idx, size_t count = 1);
+    WCHAR RemoveLast();
+    [[nodiscard]] WCHAR& Last() const;
+    [[nodiscard]] WCHAR* StealData();
+    [[nodiscard]] WCHAR* LendData() const;
+    [[nodiscard]] int Find(const WCHAR& el, size_t startAt = 0) const;
+    [[nodiscard]] bool Contains(const WCHAR& el) const;
+    int Remove(const WCHAR& el);
+    void Reverse();
+    WCHAR& FindEl(const std::function<bool(WCHAR&)>& check);
+    [[nodiscard]] bool IsEmpty() const;
+    std::wstring_view AsView() const;
+    std::span<WCHAR> AsSpan() const;
+    std::wstring_view StealAsView();
+    std::span<WCHAR> StealAsSpan();
+    bool AppendChar(WCHAR c);
+    bool AppendSpan(std::span<WCHAR> d);
+    bool AppendView(const std::wstring_view sv);
+    void AppendFmt(const WCHAR* fmt, ...);
+    bool AppendAndFree(const WCHAR* s);
+    bool Replace(const WCHAR* toReplace, const WCHAR* replaceWith);
+    void Set(std::wstring_view sv);
+    WCHAR* Get() const;
+    WCHAR LastChar() const;
+
+    // http://www.cprogramming.com/c++11/c++11-ranged-for-loop.html
+    // https://stackoverflow.com/questions/16504062/how-to-make-the-for-each-loop-function-in-c-work-with-a-custom-class
+    typedef WCHAR* iterator;
+    typedef const WCHAR* const_iterator;
+
+    iterator begin() {
+        return &(els[0]);
+    }
+    const_iterator begin() const {
+        return &(els[0]);
+    }
+    iterator end() {
+        return &(els[len]);
+    }
+    const_iterator end() const {
+        return &(els[len]);
+    }
+};
+} // namespace str

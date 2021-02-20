@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 // SetWindowSubclass, RemoveWindowSubclass and DefSubclassProc require the WinXP SDK
@@ -30,16 +30,15 @@ that it's actually a part of that window.
 #define COL_WHITE RGB(0xff, 0xff, 0xff)
 #define COL_BLACK RGB(0, 0, 0)
 
-static void FrameRatePaint(FrameRateWnd* w, HDC hdc, PAINTSTRUCT& ps) {
-    UNUSED(ps);
+static void FrameRatePaint(FrameRateWnd* w, HDC hdc, [[maybe_unused]] PAINTSTRUCT& ps) {
     RECT rc = GetClientRect(w->hwnd);
     ScopedGdiObj<HBRUSH> brush(CreateSolidBrush(COL_BLACK));
     FillRect(hdc, &rc, brush);
 
     SetTextColor(hdc, COL_WHITE);
 
-    ScopedHdcSelect selFont(hdc, w->font);
-    AutoFreeW txt(str::Format(L"%d", w->frameRate));
+    ScopedSelectObject selFont(hdc, w->font);
+    AutoFreeWstr txt(str::Format(L"%d", w->frameRate));
     DrawCenteredText(hdc, rc, txt);
 }
 
@@ -52,7 +51,7 @@ static void PositionWindow(FrameRateWnd* w, SIZE s) {
 
 static SIZE GetIdealSize(FrameRateWnd* w) {
     WCHAR* txt = str::Format(L"%d", w->frameRate);
-    SizeI s = TextSizeInHwnd(w->hwnd, txt);
+    Size s = TextSizeInHwnd(w->hwnd, txt);
 
     // add padding
     s.dy += 4;
@@ -77,9 +76,8 @@ static void FrameRateOnPaint(FrameRateWnd* w) {
     EndPaint(w->hwnd, &ps);
 }
 
-static LRESULT CALLBACK WndProcFrameRateAssociated(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR uIdSubclass,
-                                                   DWORD_PTR dwRefData) {
-    UNUSED(uIdSubclass);
+static LRESULT CALLBACK WndProcFrameRateAssociated(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                                   [[maybe_unused]] UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
     if (WM_MOVING == msg || WM_SIZING == msg || WM_SIZE == msg || WM_WINDOWPOSCHANGED == msg || WM_MOVE == msg) {
         FrameRateWnd* w = (FrameRateWnd*)dwRefData;
         PositionWindow(w, w->maxSizeSoFar);

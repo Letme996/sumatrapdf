@@ -1,27 +1,43 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
-
-class SplitterWnd;
 
 enum class SplitterType {
     Horiz,
     Vert,
 };
 
+struct SplitterCtrl;
+
 // called when user drags the splitter ('done' is false) and when drag is finished ('done' is
 // true). the owner can constrain splitter by using current cursor
-// position and returning false if it's not allowed to go there
-typedef std::function<bool(bool)> SplitterWndCb;
+// position and setting resizeAllowed to false if it's not allowed to go there
+struct SplitterMoveEvent {
+    SplitterCtrl* w{nullptr};
+    bool done{false};
+    // user can set to false to forbid resizing here
+    bool resizeAllowed{true};
+};
 
-SplitterWnd* CreateSplitter(HWND parent, SplitterType type, const SplitterWndCb&);
-HWND GetHwnd(SplitterWnd*);
-void SetBgCol(SplitterWnd*, COLORREF);
+typedef std::function<void(SplitterMoveEvent*)> SplitterMoveHandler;
 
-// call at the end of program
-void DeleteSplitterBrush();
+// TODO: maybe derive from WindowBase and allow registering custom classes
+// for WindowBase
+struct SplitterCtrl : public Window {
+    SplitterType type = SplitterType::Horiz;
+    bool isLive{true};
+    SplitterMoveHandler onSplitterMove{nullptr};
 
-// If a splitter is "live", the owner will re-layout windows in the callback,
-// otherwise we'll draw an indicator of where the splitter will be
-// at the end of resize and the owner only re-layouts when callback is called
-// with 'done' set to true
-void SetSplitterLive(SplitterWnd*, bool live);
+    HBITMAP bmp{nullptr};
+    HBRUSH brush{nullptr};
+
+    Point prevResizeLinePos{};
+    // if a parent clips children, DrawXorBar() doesn't work, so for
+    // non-live resize, we need to remove WS_CLIPCHILDREN style from
+    // parent and restore it when we're done
+    bool parentClipsChildren{false};
+
+    SplitterCtrl(HWND parent);
+    ~SplitterCtrl() override;
+
+    bool Create() override;
+};

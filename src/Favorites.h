@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 /*
@@ -12,7 +12,7 @@ Favorites are accurate to a page - it's simple and should be good enough
 for the user.
 
 A favorite is identified by a (mandatory) page number and (optional) name
-(provided by the user) and page label (from BaseEngine::GetPageLabel).
+(provided by the user) and page label (from EngineBase::GetPageLabel).
 
 Favorites do not remember presentation settings like zoom or viewing mode -
 they are for navigation only. Presentation settings are remembered on a
@@ -24,7 +24,7 @@ class Favorites {
     size_t idxCache = (size_t)-1;
 
   public:
-    Favorites() {}
+    Favorites() = default;
 
     Favorite* GetByMenuId(int menuId, DisplayState** dsOut = nullptr);
     void ResetMenuIds();
@@ -36,8 +36,11 @@ class Favorites {
     void RemoveAllForFile(const WCHAR* filePath);
 };
 
-void AddFavorite(WindowInfo* win);
-void DelFavorite(WindowInfo* win);
+bool HasFavorites();
+void AddFavoriteWithLabelAndName(WindowInfo* win, int pageNo, const WCHAR* pageLabel, AutoFreeWstr& name);
+void AddFavoriteForCurrentPage(WindowInfo* win, int pageNo);
+void AddFavoriteForCurrentPage(WindowInfo* win);
+void DelFavorite(const WCHAR* filePath, int pageNo);
 void RebuildFavMenu(WindowInfo* win, HMENU menu);
 void CreateFavorites(WindowInfo* win);
 void ToggleFavorites(WindowInfo* win);

@@ -1,8 +1,9 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
 #include "utils/BitManip.h"
+#include "utils/GdiPlusUtil.h"
 #include "utils/HtmlParserLookup.h"
 #include "mui/Mui.h"
 #include "utils/SerializeTxt.h"
@@ -11,17 +12,19 @@
 #include "utils/TrivialHtmlParser.h"
 #include "utils/TxtParser.h"
 #include "utils/WinUtil.h"
+#include "utils/Log.h"
+
 // rendering engines
 #include "EbookBase.h"
 #include "HtmlFormatter.h"
 // ui
+#include "DisplayMode.h"
 #include "SumatraPDF.h"
 #include "resource.h"
+#include "Commands.h"
 #include "EbookControls.h"
 #include "MuiEbookPageDef.h"
 #include "PagesLayoutDef.h"
-#define NOLOG 1
-#include "utils/DebugLog.h"
 
 constexpr const char ebookWinDesc[] = R"data(
 Style [
@@ -133,7 +136,7 @@ VerticalLayout [
 ]
 )data";
 
-PageControl::PageControl() : page(nullptr), cursorX(-1), cursorY(-1) {
+PageControl::PageControl() {
     bit::Set(wantedInputBits, WantsMouseMoveBit, WantsMouseClickBit);
 }
 
@@ -150,12 +153,13 @@ void PageControl::SetPage(HtmlPage* newPage) {
 }
 
 DrawInstr* PageControl::GetLinkAt(int x, int y) const {
-    if (!page)
+    if (!page) {
         return nullptr;
+    }
 
-    PointF pt((REAL)(x - cachedStyle->padding.left), (REAL)(y - cachedStyle->padding.top));
+    PointF pt((float)(x - cachedStyle->padding.left), (float)(y - cachedStyle->padding.top));
     for (DrawInstr& i : page->instructions) {
-        if (DrawInstrType::LinkStart == i.type && !i.bbox.IsEmptyArea() && i.bbox.Contains(pt)) {
+        if (DrawInstrType::LinkStart == i.type && !i.bbox.IsEmpty() && i.bbox.Contains(pt)) {
             return &i;
         }
     }
@@ -165,7 +169,7 @@ DrawInstr* PageControl::GetLinkAt(int x, int y) const {
 void PageControl::NotifyMouseMove(int x, int y) {
     DrawInstr* link = GetLinkAt(x, y);
     if (!link) {
-        SetCursor(IDC_ARROW);
+        SetCursorCached(IDC_ARROW);
         if (toolTip) {
             Control::NotifyMouseLeave();
             str::ReplacePtr(&toolTip, nullptr);
@@ -173,8 +177,8 @@ void PageControl::NotifyMouseMove(int x, int y) {
         return;
     }
 
-    SetCursor(IDC_HAND);
-    AutoFreeW url(str::conv::FromHtmlUtf8(link->str.s, link->str.len));
+    SetCursorCached(IDC_HAND);
+    AutoFreeWstr url(strconv::FromHtmlUtf8(link->str.s, link->str.len));
     if (toolTip && (!url::IsAbsolute(url) || !str::Eq(toolTip, url))) {
         Control::NotifyMouseLeave();
         str::ReplacePtr(&toolTip, nullptr);
@@ -187,32 +191,35 @@ void PageControl::NotifyMouseMove(int x, int y) {
 
 // size of the drawable area i.e. size minus padding
 Size PageControl::GetDrawableSize() const {
-    Size s;
-    pos.GetSize(&s);
+    Size s = pos.Size();
     Padding pad = cachedStyle->padding;
-    s.Width -= (pad.left + pad.right);
-    s.Height -= (pad.top + pad.bottom);
-    if ((s.Width <= 0) || (s.Height <= 0))
+    s.dx -= (pad.left + pad.right);
+    s.dy -= (pad.top + pad.bottom);
+    if ((s.dx <= 0) || (s.dy <= 0)) {
         return Size();
+    }
     return s;
 }
+
+bool gLogEbook = false;
 
 void PageControl::Paint(Graphics* gfx, int offX, int offY) {
     CrashIf(!IsVisible());
 
-    Timer timerAll;
+    auto timerAll = TimeGet();
 
     CachedStyle* s = cachedStyle;
-    Timer timerFill;
-    Rect r(offX, offY, pos.Width, pos.Height);
+    auto timerFill = TimeGet();
+    Gdiplus::RectF r(offX, offY, pos.dx, pos.dy);
     if (!s->bgColor->IsTransparent()) {
         Brush* br = BrushFromColorData(s->bgColor, r);
         gfx->FillRectangle(br, r);
     }
-    double durFill = timerFill.Stop();
+    double durFill = TimeSinceInMs(timerFill);
 
-    if (!page)
+    if (!page) {
         return;
+    }
 
     // during resize the page we currently show might be bigger than
     // our area. To avoid drawing outside our area we clip
@@ -230,20 +237,22 @@ void PageControl::Paint(Graphics* gfx, int offX, int offY) {
     Color textColor, bgColor;
     textColor.SetFromCOLORREF(txtCol);
 
-    ITextRender* textRender = CreateTextRender(GetTextRenderMethod(), gfx, pos.Width, pos.Height);
+    ITextRender* textRender = CreateTextRender(GetTextRenderMethod(), gfx, pos.dx, pos.dy);
     // ITextRender *textRender = CreateTextRender(TextRenderMethodHdc, gfx, pos.Width, pos.Height);
 
     bgColor.SetFromCOLORREF(bgCol);
     textRender->SetTextBgColor(bgColor);
 
-    Timer timerDrawHtml;
-    DrawHtmlPage(gfx, textRender, &page->instructions, (REAL)r.X, (REAL)r.Y, IsDebugPaint(), textColor);
-    double durDraw = timerDrawHtml.Stop();
+    auto timerDrawHtml = TimeGet();
+    DrawHtmlPage(gfx, textRender, &page->instructions, (float)r.X, (float)r.Y, IsDebugPaint(), textColor);
+    double durDraw = TimeSinceInMs(timerDrawHtml);
     gfx->SetClip(&origClipRegion, CombineModeReplace);
     delete textRender;
 
-    double durAll = timerAll.Stop();
-    lf("all: %.2f, fill: %.2f, draw html: %.2f", durAll, durFill, durDraw);
+    double durAll = TimeSinceInMs(timerAll);
+    if (gLogEbook) {
+        logf("all: %.2f, fill: %.2f, draw html: %.2f\n", durAll, durFill, durDraw);
+    }
 }
 
 Control* CreatePageControl(TxtNode* structDef) {
@@ -253,8 +262,9 @@ Control* CreatePageControl(TxtNode* structDef) {
     Style* style = StyleByName(def->style);
     c->SetStyle(style);
 
-    if (def->name)
+    if (def->name) {
         c->SetName(def->name);
+    }
 
     FreeEbookPageDef(def);
     return c;
@@ -268,8 +278,9 @@ ILayout* CreatePagesLayout(ParsedMui* parsedMui, TxtNode* structDef) {
     PageControl* page2 = static_cast<PageControl*>(FindControlNamed(*parsedMui, def->page2));
     CrashIf(!page1 || !page2);
     PagesLayout* layout = new PagesLayout(page1, page2, def->spaceDx);
-    if (def->name)
+    if (def->name) {
         layout->SetName(def->name);
+    }
     FreePagesLayoutDef(def);
     return layout;
 }
@@ -280,16 +291,21 @@ void SetMainWndBgCol(EbookControls* ctrls) {
 
     Style* styleMainWnd = StyleByName("styleMainWnd");
     CrashIf(!styleMainWnd);
-    styleMainWnd->Set(
-        Prop::AllocColorSolid(PropBgColor, GetRValueSafe(bgColor), GetGValueSafe(bgColor), GetBValueSafe(bgColor)));
+    if (!styleMainWnd) {
+        return;
+    }
+    u8 r, g, b;
+    UnpackRgb(bgColor, r, g, b);
+    u8 rt, gt, bt;
+    UnpackRgb(txtColor, rt, gt, bt);
+    styleMainWnd->Set(Prop::AllocColorSolid(PropBgColor, r, g, b));
     ctrls->mainWnd->SetStyle(styleMainWnd);
 
     Style* styleStatus = StyleByName("styleStatus");
-    styleStatus->Set(
-        Prop::AllocColorSolid(PropBgColor, GetRValueSafe(bgColor), GetGValueSafe(bgColor), GetBValueSafe(bgColor)));
+    styleStatus->Set(Prop::AllocColorSolid(PropBgColor, r, g, b));
+    styleStatus->Set(Prop::AllocColorSolid(PropColor, rt, gt, bt));
     ctrls->status->SetStyle(styleStatus);
 
-    // TODO: should also allow to change text color
     // TODO: also match the colors of progress bar to be based on background color
     // TODO: update tab color
 
@@ -318,7 +334,7 @@ EbookControls* CreateEbookControls(HWND hwnd, FrameRateWnd* frameRateWnd) {
     CrashIf(!ctrls->status);
     ctrls->progress = FindScrollBarNamed(*muiDef, "progressScrollBar");
     CrashIf(!ctrls->progress);
-    ctrls->progress->hCursor = GetCursor(IDC_HAND);
+    ctrls->progress->hCursor = GetCachedCursor(IDC_HAND);
 
     ctrls->topPart = FindLayoutNamed(*muiDef, "top");
     CrashIf(!ctrls->topPart);
@@ -365,7 +381,7 @@ void PagesLayout::Arrange(const Rect finalRect) {
 
     // when both visible, give them equally sized areas
     // with spaceDx between them
-    int dx = finalRect.Width;
+    int dx = finalRect.dx;
     if (page2->IsVisible()) {
         dx = (dx / 2) - spaceDx;
         // protect against excessive spaceDx values
@@ -376,8 +392,8 @@ void PagesLayout::Arrange(const Rect finalRect) {
         }
     }
     Rect r = finalRect;
-    r.Width = dx;
+    r.dx = dx;
     page1->Arrange(r);
-    r.X = r.X + dx + spaceDx;
+    r.x = r.x + dx + spaceDx;
     page2->Arrange(r);
 }

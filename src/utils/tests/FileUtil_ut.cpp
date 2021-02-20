@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
@@ -8,14 +8,14 @@
 #include "utils/UtAssert.h"
 
 void FileUtilTest() {
-    WCHAR* path1 = L"C:\\Program Files\\SumatraPDF\\SumatraPDF.exe";
+    const WCHAR* path1 = L"C:\\Program Files\\SumatraPDF\\SumatraPDF.exe";
 
-    const WCHAR* baseName = path::GetBaseName(path1);
+    const WCHAR* baseName = path::GetBaseNameNoFree(path1);
     utassert(str::Eq(baseName, L"SumatraPDF.exe"));
 
-    AutoFreeW dirName(path::GetDir(path1));
+    AutoFreeWstr dirName(path::GetDir(path1));
     utassert(str::Eq(dirName, L"C:\\Program Files\\SumatraPDF"));
-    baseName = path::GetBaseName(dirName);
+    baseName = path::GetBaseNameNoFree(dirName);
     utassert(str::Eq(baseName, L"SumatraPDF"));
 
     dirName.Set(path::GetDir(L"C:\\Program Files"));

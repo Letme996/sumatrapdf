@@ -1,8 +1,8 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
-#include "BaseUtil.h"
-#include "CmdLineParser.h"
+#include "utils/BaseUtil.h"
+#include "utils/CmdLineParser.h"
 
 // Parses a command line according to the specification at
 // http://msdn.microsoft.com/en-us/library/17w5ykft.aspx :
@@ -12,17 +12,20 @@
 // * an even number of backslashes followed by either a backslash and a quotation
 //   mark or just a quotation mark is collapsed into half as many backslashes
 void ParseCmdLine(const WCHAR* cmdLine, WStrVec& out, int maxParts) {
-    if (!cmdLine)
+    if (!cmdLine) {
         return;
+    }
 
-    str::Str<WCHAR> arg(MAX_PATH / 2);
+    str::WStr arg(MAX_PATH / 2);
     const WCHAR* s;
 
     while (--maxParts != 0) {
-        while (str::IsWs(*cmdLine))
+        while (str::IsWs(*cmdLine)) {
             cmdLine++;
-        if (!*cmdLine)
+        }
+        if (!*cmdLine) {
             break;
+        }
 
         bool insideQuotes = false;
         for (; *cmdLine; cmdLine++) {
@@ -34,11 +37,13 @@ void ParseCmdLine(const WCHAR* cmdLine, WStrVec& out, int maxParts) {
                 break;
             }
             if ('\\' == *cmdLine) {
-                for (s = cmdLine + 1; '\\' == *s; s++)
+                for (s = cmdLine + 1; '\\' == *s; s++) {
                     ;
+                }
                 // backslashes escape only when followed by a quotation mark
-                if ('"' == *s)
+                if ('"' == *s) {
                     cmdLine++;
+                }
             }
             arg.Append(*cmdLine);
         }
@@ -46,9 +51,11 @@ void ParseCmdLine(const WCHAR* cmdLine, WStrVec& out, int maxParts) {
     }
 
     if (*cmdLine) {
-        while (str::IsWs(*cmdLine))
+        while (str::IsWs(*cmdLine)) {
             cmdLine++;
-        if (*cmdLine)
+        }
+        if (*cmdLine) {
             out.Append(str::Dup(cmdLine));
+        }
     }
 }

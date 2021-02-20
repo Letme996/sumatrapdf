@@ -1,11 +1,11 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 enum class TextSearchDirection : bool { Backward = false, Forward = true };
 
 class TextSearch : public TextSelection {
   public:
-    TextSearch(BaseEngine* engine, PageTextCache* textCache);
+    TextSearch(EngineBase* engine, DocumentTextCache* textCache);
     ~TextSearch();
 
     void SetSensitive(bool sensitive);
@@ -15,10 +15,14 @@ class TextSearch : public TextSelection {
     TextSel* FindNext(ProgressUpdateUI* tracker = nullptr);
 
     // note: the result might not be a valid page number!
-    int GetCurrentPageNo() const { return findPage; }
+    int GetCurrentPageNo() const {
+        return findPage;
+    }
 
     // note: the result might not be a valid page number!
-    int GetSearchHitStartPageNo() const { return searchHitStartAt; }
+    int GetSearchHitStartPageNo() const {
+        return searchHitStartAt;
+    }
 
   protected:
     // Lightweight container for page and offset within the page to use as return value of MatchEnd
@@ -58,5 +62,5 @@ class TextSearch : public TextSelection {
 
     WCHAR* lastText = nullptr;
     int nPages = 0;
-    std::vector<bool> pagesToSkip;
+    Vec<bool> pagesToSkip;
 };

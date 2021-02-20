@@ -1,4 +1,4 @@
-/* Copyright (C) 2001-2019 Artifex Software, Inc.
+/* Copyright (C) 2001-2020 Artifex Software, Inc.
    All Rights Reserved.
 
    This software is provided AS-IS with no warranty, either express or
@@ -39,10 +39,6 @@
 #include "jbig2_symbol_dict.h"
 #include "jbig2_text.h"
 
-#if !defined (UINT32_MAX)
-#define UINT32_MAX 0xffffffff
-#endif
-
 Jbig2Segment *
 jbig2_parse_segment_header(Jbig2Ctx *ctx, uint8_t *buf, size_t buf_size, size_t *p_header_size)
 {
@@ -61,12 +57,17 @@ jbig2_parse_segment_header(Jbig2Ctx *ctx, uint8_t *buf, size_t buf_size, size_t 
 
     result = jbig2_new(ctx, Jbig2Segment, 1);
     if (result == NULL) {
-        jbig2_error(ctx, JBIG2_SEVERITY_FATAL, -1, "failed to allocate segment");
+        jbig2_error(ctx, JBIG2_SEVERITY_FATAL, JBIG2_UNKNOWN_SEGMENT_NUMBER, "failed to allocate segment");
         return NULL;
     }
 
     /* 7.2.2 */
     result->number = jbig2_get_uint32(buf);
+    if (result->number == JBIG2_UNKNOWN_SEGMENT_NUMBER) {
+        jbig2_error(ctx, JBIG2_SEVERITY_FATAL, JBIG2_UNKNOWN_SEGMENT_NUMBER, "segment number too large");
+        jbig2_free(ctx->allocator, result);
+        return NULL;
+    }
 
     /* 7.2.3 */
     result->flags = buf[4];
@@ -87,7 +88,7 @@ jbig2_parse_segment_header(Jbig2Ctx *ctx, uint8_t *buf, size_t buf_size, size_t 
     referred_to_segment_size = result->number <= 256 ? 1 : result->number <= 65536 ? 2 : 4;     /* 7.2.5 */
     pa_size = result->flags & 0x40 ? 4 : 1;     /* 7.2.6 */
     if (offset + referred_to_segment_count * referred_to_segment_size + pa_size + 4 > buf_size) {
-        jbig2_error(ctx, JBIG2_SEVERITY_FATAL, result->number, "insufficient data to parse segment header", -1);
+        jbig2_error(ctx, JBIG2_SEVERITY_DEBUG, result->number, "attempted to parse segment header with insufficient data, asking for more data");
         jbig2_free(ctx->allocator, result);
         return NULL;
     }
@@ -334,7 +335,7 @@ int
 jbig2_parse_segment(Jbig2Ctx *ctx, Jbig2Segment *segment, const uint8_t *segment_data)
 {
     jbig2_error(ctx, JBIG2_SEVERITY_INFO, segment->number,
-                "segment %d, flags=%x, type=%d, data_length=%d", segment->number, segment->flags, segment->flags & 63, segment->data_length);
+                "segment %d, flags=%x, type=%d, data_length=%ld", segment->number, segment->flags, segment->flags & 63, (long) segment->data_length);
     switch (segment->flags & 63) {
     case 0:
         return jbig2_symbol_dictionary(ctx, segment, segment_data);

@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
 License: GPLv3 */
 
 #ifndef SUMATRA_THEME
@@ -6,7 +6,7 @@ License: GPLv3 */
 
 #if defined(ENABLE_THEME)
 
-#include "BaseUtil.h"
+#include "utils/BaseUtil.h"
 
 // The number of themes
 #define THEME_COUNT 3

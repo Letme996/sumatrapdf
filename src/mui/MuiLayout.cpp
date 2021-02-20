@@ -1,13 +1,16 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
 #include "utils/HtmlParserLookup.h"
+#include "utils/GdiPlusUtil.h"
+
 #include "Mui.h"
 
 namespace mui {
 
-DirectionalLayout::~DirectionalLayout() {}
+DirectionalLayout::~DirectionalLayout() {
+}
 
 DirectionalLayout& DirectionalLayout::Add(const DirectionalLayoutData& ld) {
     els.Append(ld);
@@ -25,10 +28,12 @@ Size DirectionalLayout::Measure(const Size availableSize) {
 
 static int CalcScaledClippedSize(int size, float scale, int selfSize) {
     int scaledSize = selfSize;
-    if (SizeSelf != scale)
+    if (SizeSelf != scale) {
         scaledSize = (int)((float)size * scale);
-    if (scaledSize > size)
+    }
+    if (scaledSize > size) {
         scaledSize = size;
+    }
     return scaledSize;
 }
 
@@ -45,20 +50,22 @@ static void RedistributeSizes(Vec<SizeInfo>& sizes, int totalSize) {
     int remainingSpace = totalSize;
 
     for (SizeInfo& si : sizes) {
-        if (SizeSelf == si.scale)
+        if (SizeSelf == si.scale) {
             remainingSpace -= si.size;
-        else
+        } else {
             toDistributeTotal += si.scale;
+        }
     }
 
     int pos = 0;
     for (SizeInfo& si : sizes) {
-        if (SizeSelf == si.scale)
+        if (SizeSelf == si.scale) {
             si.finalSize = si.size;
-        else if (remainingSpace > 0 && toDistributeTotal != 0.f)
+        } else if (remainingSpace > 0 && toDistributeTotal != 0.f) {
             si.finalSize = (int)(((float)remainingSpace * si.scale) / toDistributeTotal);
-        else
+        } else {
             si.finalSize = 0;
+        }
         si.finalPos = pos;
         pos += si.finalSize;
     }
@@ -68,15 +75,15 @@ void HorizontalLayout::Arrange(const Rect finalRect) {
     Vec<SizeInfo> sizes;
 
     for (DirectionalLayoutData& e : els) {
-        SizeInfo sizeInfo = {e.desiredSize.Width, e.sizeLayoutAxis, 0, 0};
+        SizeInfo sizeInfo = {e.desiredSize.dx, e.sizeLayoutAxis, 0, 0};
         sizes.Append(sizeInfo);
     }
-    RedistributeSizes(sizes, finalRect.Width);
+    RedistributeSizes(sizes, finalRect.dx);
 
-    Vec<SizeInfo>::Iter si = sizes.begin();
+    auto si = sizes.begin();
     for (DirectionalLayoutData& e : els) {
-        int dy = CalcScaledClippedSize(finalRect.Height, e.sizeNonLayoutAxis, e.desiredSize.Height);
-        int y = e.alignNonLayoutAxis.CalcOffset(dy, finalRect.Height);
+        int dy = CalcScaledClippedSize(finalRect.dy, e.sizeNonLayoutAxis, e.desiredSize.dy);
+        int y = e.alignNonLayoutAxis.CalcOffset(dy, finalRect.dy);
         e.element->Arrange(Rect((*si).finalPos, y, (*si).finalSize, dy));
         ++si;
     }
@@ -87,15 +94,15 @@ void VerticalLayout::Arrange(const Rect finalRect) {
     Vec<SizeInfo> sizes;
 
     for (DirectionalLayoutData& e : els) {
-        SizeInfo sizeInfo = {e.desiredSize.Height, e.sizeLayoutAxis, 0, 0};
+        SizeInfo sizeInfo = {e.desiredSize.dy, e.sizeLayoutAxis, 0, 0};
         sizes.Append(sizeInfo);
     }
-    RedistributeSizes(sizes, finalRect.Height);
+    RedistributeSizes(sizes, finalRect.dy);
 
-    Vec<SizeInfo>::Iter si = sizes.begin();
+    auto si = sizes.begin();
     for (DirectionalLayoutData& e : els) {
-        int dx = CalcScaledClippedSize(finalRect.Width, e.sizeNonLayoutAxis, e.desiredSize.Width);
-        int x = e.alignNonLayoutAxis.CalcOffset(dx, finalRect.Width);
+        int dx = CalcScaledClippedSize(finalRect.dx, e.sizeNonLayoutAxis, e.desiredSize.dx);
+        int x = e.alignNonLayoutAxis.CalcOffset(dx, finalRect.dx);
         e.element->Arrange(Rect(x, (*si).finalPos, dx, (*si).finalSize));
         ++si;
     }

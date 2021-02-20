@@ -1,13 +1,13 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 class ParsedMui {
   public:
-    std::vector<Control*> allControls;
-    std::vector<ButtonVector*> vecButtons;
-    std::vector<Button*> buttons;
-    std::vector<ScrollBar*> scrollBars;
-    std::vector<ILayout*> layouts;
+    Vec<Control*> allControls;
+    Vec<ButtonVector*> vecButtons;
+    Vec<Button*> buttons;
+    Vec<ScrollBar*> scrollBars;
+    Vec<ILayout*> layouts;
 };
 
 bool MuiFromText(ParsedMui& res, const std::string_view& s);

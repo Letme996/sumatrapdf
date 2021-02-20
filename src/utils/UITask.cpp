@@ -1,25 +1,25 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
-#include "BaseUtil.h"
-#include "WinUtil.h"
-#include "UITask.h"
+#include "utils/BaseUtil.h"
+#include "utils/WinUtil.h"
+#include "utils/UITask.h"
 
 namespace uitask {
 
 static HWND gTaskDispatchHwnd = nullptr;
 
 #define UITASK_CLASS_NAME L"UITask_Wnd_Class"
-#define WM_EXECUTE_TASK (WM_USER + 1)
+#define WM_EXECUTE_TASK (WM_USER + 104)
 
-static LRESULT CALLBACK WndProcTaskDispatch(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+static LRESULT CALLBACK WndProcTaskDispatch(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (WM_EXECUTE_TASK == msg) {
-        auto func = (std::function<void()>*)lParam;
+        auto func = (std::function<void()>*)lp;
         (*func)();
         delete func;
         return 0;
     }
-    return DefWindowProc(hwnd, msg, wParam, lParam);
+    return DefWindowProc(hwnd, msg, wp, lp);
 }
 
 void Initialize() {
@@ -48,6 +48,18 @@ void Destroy() {
 
 void Post(const std::function<void()>& f) {
     auto func = new std::function<void()>(f);
-    PostMessage(gTaskDispatchHwnd, WM_EXECUTE_TASK, 0, (LPARAM)func);
-}
+    PostMessageW(gTaskDispatchHwnd, WM_EXECUTE_TASK, 0, (LPARAM)func);
+} // NOLINT
+
+void PostOptimized(const std::function<void()>& f) {
+    if (IsGUIThread(FALSE)) {
+        // if we're already on ui thread, execute immediately
+        // faster and easier to debug
+        f();
+        return;
+    }
+    auto func = new std::function<void()>(f);
+    PostMessageW(gTaskDispatchHwnd, WM_EXECUTE_TASK, 0, (LPARAM)func);
+} // NOLINT
+
 } // namespace uitask

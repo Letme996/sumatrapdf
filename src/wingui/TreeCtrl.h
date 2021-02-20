@@ -1,12 +1,103 @@
-class TreeCtrl;
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
+   License: Simplified BSD (see COPYING.BSD) */
 
-typedef std::function<LRESULT(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, bool& discardMsg)> MsgFilter;
-typedef std::function<void(TreeCtrl*, NMTVGETINFOTIP*)> OnGetInfoTip;
-typedef std::function<LRESULT(TreeCtrl*, NMTREEVIEWW*, bool&)> OnTreeNotify;
+struct TreeCtrl;
 
-// function called for every item in the tree.
-// returning false stops iteration
-typedef std::function<bool(TVITEM*)> TreeItemVisitor;
+struct TreeItmGetTooltipEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* treeItem = nullptr;
+    NMTVGETINFOTIPW* info = nullptr;
+};
+
+typedef std::function<void(TreeItmGetTooltipEvent*)> TreeItemGetTooltipHandler;
+
+struct TreeSelectionChangedEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* prevSelectedItem = nullptr;
+    TreeItem* selectedItem = nullptr;
+    NMTREEVIEW* nmtv = nullptr;
+    bool byKeyboard = false;
+    bool byMouse = false;
+};
+
+typedef std::function<void(TreeSelectionChangedEvent*)> TreeSelectionChangedHandler;
+
+struct TreeItemExpandedEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* treeItem = nullptr;
+    bool isExpanded = false;
+};
+
+typedef std::function<void(TreeItemExpandedEvent*)> TreeItemExpandedHandler;
+
+struct TreeItemState {
+    bool isSelected = false;
+    bool isExpanded = false;
+    bool isChecked = false;
+    int nChildren = 0;
+};
+
+struct TreeItemChangedEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* treeItem = nullptr;
+    NMTVITEMCHANGE* nmic = nullptr;
+
+    bool checkedChanged = false;
+    bool expandedChanged = false;
+    bool selectedChanged = false;
+    // except for nChildren
+    TreeItemState prevState{};
+    TreeItemState newState{};
+};
+
+typedef std::function<void(TreeItemChangedEvent*)> TreeItemChangedHandler;
+
+struct TreeItemCustomDrawEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* treeItem = nullptr;
+    NMTVCUSTOMDRAW* nm = nullptr;
+};
+
+typedef std::function<void(TreeItemCustomDrawEvent*)> TreeItemCustomDrawHandler;
+
+struct TreeClickEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* treeItem = nullptr;
+    bool isDblClick = false;
+
+    // mouse x,y position relative to the window
+    Point mouseWindow{};
+    // global (screen) mouse x,y position
+    Point mouseGlobal{};
+};
+
+typedef std::function<void(TreeClickEvent*)> TreeClickHandler;
+
+struct TreeKeyDownEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    NMTVKEYDOWN* nmkd = nullptr;
+    int keyCode = 0;
+    u32 flags = 0;
+};
+
+typedef std::function<void(TreeKeyDownEvent*)> TreeKeyDownHandler;
+
+struct TreeGetDispInfoEvent : WndEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* treeItem = nullptr;
+    NMTVDISPINFOEXW* dispInfo = nullptr;
+};
+
+typedef std::function<void(TreeGetDispInfoEvent*)> TreeGetDispInfoHandler;
+
+struct TreeItemDraggeddEvent {
+    TreeCtrl* treeCtrl = nullptr;
+    TreeItem* draggedItem = nullptr;
+    TreeItem* dragTargetItem = nullptr;
+    bool isStart = false;
+};
+
+typedef std::function<void(TreeItemDraggeddEvent*)> TreeItemDraggedHandler;
 
 /* Creation sequence:
 - auto ctrl = new TreeCtrl()
@@ -14,49 +105,101 @@ typedef std::function<bool(TVITEM*)> TreeItemVisitor;
 - ctrl->Create()
 */
 
-class TreeCtrl {
-  public:
-    TreeCtrl(HWND parent, RECT* initialPosition);
-    ~TreeCtrl();
-
-    void Clear();
-    TVITEM* GetItem(HTREEITEM);
-    std::wstring GetInfoTip(HTREEITEM);
-    HTREEITEM GetRoot();
-    HTREEITEM GetChild(HTREEITEM);
-    HTREEITEM GetSiblingNext(HTREEITEM); // GetNextSibling is windows macro
-    HTREEITEM GetSelection();
-    bool SelectItem(HTREEITEM);
-    HTREEITEM InsertItem(TV_INSERTSTRUCT*);
-
-    void VisitNodes(const TreeItemVisitor& visitor);
-    // TODO: create 2 functions for 2 different fItemRect values
-    bool GetItemRect(HTREEITEM, bool fItemRect, RECT& r);
-
-    bool Create(const WCHAR* title);
-    void SetFont(HFONT);
-
+struct TreeCtrl : WindowBase {
     // creation parameters. must be set before CreateTreeCtrl() call
-    HWND parent = nullptr;
-    RECT initialPos = {0, 0, 0, 0};
-    DWORD dwStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT |
-                    TVS_SHOWSELALWAYS | TVS_TRACKSELECT | TVS_DISABLEDRAGDROP | TVS_NOHSCROLL | TVS_INFOTIP;
-    DWORD dwExStyle = 0;
-    HMENU menu = nullptr;
-    COLORREF bgCol = 0;
-    WCHAR infotipBuf[INFOTIPSIZE + 1]; // +1 just in case
+    bool withCheckboxes{false};
 
-    // this data can be set directly
-    MsgFilter preFilter; // called at start of windows proc to allow intercepting messages
-    // when set, allows the caller to set info tip by updating NMTVGETINFOTIP
-    OnGetInfoTip onGetInfoTip;
-    OnTreeNotify onTreeNotify;
+    // set before Create() to enable drag&drop
+    bool supportDragDrop{false};
+
+    // TODO: possibly not needed anymore
+    bool isDragging{false};
+
+    TreeItem* draggedItem{nullptr};
+    TreeItem* dragTargetItem{nullptr};
+
+    // treeModel not owned by us
+    TreeModel* treeModel{nullptr};
+
+    // for all WM_NOTIFY messages
+    WmNotifyHandler onNotify{nullptr};
+
+    // for WM_NOTIFY with TVN_GETINFOTIP
+    TreeItemGetTooltipHandler onGetTooltip{nullptr};
+
+    // for WM_NOTIFY with TVN_SELCHANGED
+    TreeSelectionChangedHandler onTreeSelectionChanged{nullptr};
+
+    // for WM_NOTIFY with TVN_ITEMEXPANDED
+    TreeItemExpandedHandler onTreeItemExpanded{nullptr};
+
+    // for WM_NOTIFY with TVN_ITEMCHANGED
+    TreeItemChangedHandler onTreeItemChanged{nullptr};
+
+    // for WM_NOTIFY wiht NM_CUSTOMDRAW
+    TreeItemCustomDrawHandler onTreeItemCustomDraw{nullptr};
+
+    // for WM_NOTIFY with NM_CLICK or NM_DBCLICK
+    TreeClickHandler onTreeClick{nullptr};
+
+    // for WM_NOITFY with TVN_KEYDOWN
+    TreeKeyDownHandler onTreeKeyDown{nullptr};
+
+    // for WM_NOTIFY with TVN_GETDISPINFO
+    TreeGetDispInfoHandler onTreeGetDispInfo{nullptr};
+
+    // for TVN_BEGINDRAG / WM_MOUSEMOVE / WM_LBUTTONUP
+    TreeItemDraggedHandler onTreeItemDragStartEnd{nullptr};
+
+    Size idealSize{};
 
     // private
-    HWND hwnd = nullptr;
-    TVITEM item = {0};
-    UINT_PTR hwndSubclassId = 0;
-    UINT_PTR hwndParentSubclassId = 0;
+    TVITEMW item{};
+
+    // TreeItem* -> HTREEITEM mapping so that we can
+    // find HTREEITEM from TreeItem*
+    Vec<std::tuple<TreeItem*, HTREEITEM>> insertedItems;
+
+    TreeCtrl(HWND parent);
+    ~TreeCtrl();
+
+    Size GetIdealSize() override;
+    void WndProc(WndEvent*) override;
+
+    void Clear();
+
+    void SetTreeModel(TreeModel*);
+
+    str::WStr GetDefaultTooltip(TreeItem*);
+    TreeItem* GetSelection();
+
+    bool UpdateItem(TreeItem*);
+    bool SelectItem(TreeItem*);
+    bool GetItemRect(TreeItem*, bool justText, RECT& r);
+    TreeItem* GetItemAt(int x, int y);
+    bool IsExpanded(TreeItem*);
+
+    bool Create() override;
+
+    void SetBackgroundColor(COLORREF);
+    void SetTextColor(COLORREF);
+
+    void ExpandAll();
+    void CollapseAll();
+
+    HTREEITEM GetHandleByTreeItem(TreeItem*);
+    TreeItem* GetTreeItemByHandle(HTREEITEM);
+
+    void SetCheckState(TreeItem*, bool);
+    bool GetCheckState(TreeItem*);
+
+    TreeItemState GetItemState(TreeItem*);
+
+    HWND GetToolTipsHwnd();
+    void SetToolTipsDelayTime(int type, int timeInMs);
 };
 
-void TreeViewExpandRecursively(HWND hTree, HTREEITEM hItem, UINT flag, bool subtree);
+void FillTVITEM(TVITEMEXW* tvitem, TreeItem* ti, bool withCheckboxes);
+TreeItem* GetOrSelectTreeItemAtPos(ContextMenuEvent* args, POINT& pt);
+
+bool IsTreeKind(Kind);

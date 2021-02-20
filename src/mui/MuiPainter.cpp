@@ -1,24 +1,31 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
 #include "utils/HtmlParserLookup.h"
+#include "utils/Log.h"
+#include "utils/WinUtil.h"
+#include "utils/GdiPlusUtil.h"
+
 #include "Mui.h"
-#include "utils/DebugLog.h"
 
 namespace mui {
 
 static bool BitmapNotBigEnough(Bitmap* bmp, int dx, int dy) {
-    if (nullptr == bmp)
+    if (nullptr == bmp) {
         return true;
-    if (bmp->GetWidth() < (UINT)dx)
+    }
+    if (bmp->GetWidth() < (uint)dx) {
         return true;
-    if (bmp->GetHeight() < (UINT)dy)
+    }
+    if (bmp->GetHeight() < (uint)dy) {
         return true;
+    }
     return false;
 }
 
-Painter::Painter(HwndWrapper* wnd) : wnd(wnd), cacheBmp(nullptr) {}
+Painter::Painter(HwndWrapper* wnd) : wnd(wnd), cacheBmp(nullptr) {
+}
 
 Painter::~Painter() {
     ::delete cacheBmp;
@@ -33,8 +40,9 @@ void Painter::PaintBackground(Graphics* g, Rect r) {
     // at the top if I don't do this
     r.Inflate(1, 1);
     ColorData* bgColor = wnd->cachedStyle->bgColor;
-    Brush* br = BrushFromColorData(bgColor, r);
-    g->FillRectangle(br, r);
+    auto rf = ToRectFl(r);
+    Brush* br = BrushFromColorData(bgColor, rf);
+    g->FillRectangle(br, ToGdipRect(r));
 }
 
 // TODO: figure out how INT16_MIN was defined
@@ -55,27 +63,29 @@ static void PaintWindowsInZOrder(Graphics* g, Control* c) {
 
     CollectWindowsBreathFirst(c, 0, 0, &wndFilter, &toPaint);
     size_t paintedCount = 0;
-    int16_t lastPaintedZOrder = MY_INT16_MIN;
+    i16 lastPaintedZOrder = MY_INT16_MIN;
     for (;;) {
         // find which z-order should we paint now
-        int16_t minUnpaintedZOrder = MY_INT16_MAX;
+        i16 minUnpaintedZOrder = MY_INT16_MAX;
         for (CtrlAndOffset& coff : toPaint) {
-            int16_t zOrder = coff.c->zOrder;
-            if ((zOrder > lastPaintedZOrder) && (zOrder < minUnpaintedZOrder))
+            i16 zOrder = coff.c->zOrder;
+            if ((zOrder > lastPaintedZOrder) && (zOrder < minUnpaintedZOrder)) {
                 minUnpaintedZOrder = zOrder;
+            }
         }
         for (CtrlAndOffset& coff : toPaint) {
             if (minUnpaintedZOrder == coff.c->zOrder) {
                 coff.c->Paint(g, coff.offX, coff.offY);
                 if (IsDebugPaint()) {
-                    Rect bbox(coff.offX, coff.offY, coff.c->pos.Width, coff.c->pos.Height);
+                    Gdiplus::Rect bbox(coff.offX, coff.offY, coff.c->pos.dx, coff.c->pos.dy);
                     g->DrawRectangle(&debugPen, bbox);
                 }
                 ++paintedCount;
             }
         }
-        if (paintedCount == toPaint.size())
+        if (paintedCount == toPaint.size()) {
             return;
+        }
         CrashIf(paintedCount > toPaint.size());
         lastPaintedZOrder = minUnpaintedZOrder;
     }
@@ -100,7 +110,7 @@ void Painter::Paint(HWND hwnd, bool isDirty) {
     Graphics gDC(dc);
     gDC.GetClip(&clip);
 
-    ClientRect r(hwnd);
+    Rect r = ClientRect(hwnd);
 
     // TODO: fix showing black parts when resizing a window.
     // my theory is that we see black background on right/bottom
@@ -120,7 +130,7 @@ void Painter::Paint(HWND hwnd, bool isDirty) {
     // sometimes causes flickr
     // See http://www.catch22.net/tuts/flicker for info on win repainting
     if (cacheBmp && !sizeDuringLastPaint.Equals(Size(r.dx, r.dy))) {
-        PaintBackground(&gDC, r.ToGdipRect());
+        PaintBackground(&gDC, r);
         gDC.DrawImage(cacheBmp, 0, 0);
         sizeDuringLastPaint = Size(r.dx, r.dy);
     }
@@ -143,7 +153,7 @@ void Painter::Paint(HWND hwnd, bool isDirty) {
         InitGraphicsMode(&g);
         g.SetClip(&clip, CombineModeReplace);
 
-        PaintBackground(&g, r.ToGdipRect());
+        PaintBackground(&g, r);
         PaintWindowsInZOrder(&g, wnd);
     }
 

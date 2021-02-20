@@ -1,4 +1,5 @@
-#include "mupdf/xps.h"
+#include "mupdf/fitz.h"
+#include "xps-imp.h"
 
 static inline int xps_tolower(int c)
 {
@@ -33,30 +34,33 @@ skip_scheme(char *path)
 
 	/* Skip over: alpha *(alpha | digit | "+" | "-" | ".") looking for : */
 	if (*p >= 'a' && *p <= 'z')
-	{}
+	{
+		/* Starts with a-z */
+	}
 	else if (*p >= 'A' && *p <= 'Z')
-	{}
+	{
+		/* Starts with A-Z */
+	}
 	else
 		return path;
 
 	while (*++p)
 	{
 		if (*p >= 'a' && *p <= 'z')
-		{}
-		else if (*p >= 'A' && *p <= 'Z')
-		{}
-		else if (*p >= '0' && *p <= '9')
-		{}
-		else if (*p == '+')
-		{}
-		else if (*p == '-')
-		{}
-		else if (*p == '.')
-		{}
-		else if (*p == ':')
+			continue;
+		if (*p >= 'A' && *p <= 'Z')
+			continue;
+		if (*p >= '0' && *p <= '9')
+			continue;
+		if (*p == '+')
+			continue;
+		if (*p == '-')
+			continue;
+		if (*p == '.')
+			continue;
+		if (*p == ':')
 			return p+1;
-		else
-			break;
+		break;
 	}
 	return path;
 }
@@ -81,7 +85,7 @@ skip_authority(char *path)
 #define SEP(x) ((x)=='/' || (x) == 0)
 
 static char *
-xps_clean_path(char *name)
+clean_path(char *name)
 {
 	char *p, *q, *dotdot, *start;
 	int rooted;
@@ -138,7 +142,7 @@ xps_clean_path(char *name)
 }
 
 void
-xps_resolve_url(char *output, char *base_uri, char *path, int output_size)
+xps_resolve_url(fz_context *ctx, xps_document *doc, char *output, char *base_uri, char *path, int output_size)
 {
 	char *p = skip_authority(skip_scheme(path));
 
@@ -148,18 +152,10 @@ xps_resolve_url(char *output, char *base_uri, char *path, int output_size)
 	}
 	else
 	{
-		int len = fz_strlcpy(output, base_uri, output_size);
+		size_t len = fz_strlcpy(output, base_uri, output_size);
 		if (len == 0 || output[len-1] != '/')
 			fz_strlcat(output, "/", output_size);
 		fz_strlcat(output, path, output_size);
 	}
-	xps_clean_path(output);
-}
-
-int
-xps_url_is_remote(char *path)
-{
-	char *p = skip_authority(skip_scheme(path));
-
-	return p != path;
+	clean_path(output);
 }

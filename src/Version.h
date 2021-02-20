@@ -1,21 +1,17 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 // CURR_VERSION can be over-written externally
 #ifndef CURR_VERSION
-#define CURR_VERSION 3.2
+#define CURR_VERSION 3.3
 #endif
 #ifndef CURR_VERSION_COMMA
-#define CURR_VERSION_COMMA 3,2,0
+#define CURR_VERSION_COMMA 3,3,0
 #endif
 
 // VER_QUALIFIER allows people who recompile SumatraPDF to add
 // a distinguishing string at the end of the version number
 // (e.g. version 2.3.2z or 2.4opt)
-
-#define APP_NAME_STR       L"SumatraPDF"
-
-// #define SVN_PRE_RELEASE_VER 2295
 
 #define _QUOTEME(x) #x
 #define QM(x) _QUOTEME(x)
@@ -27,7 +23,7 @@
 #define QM4(x, y, z, u) _QUOTEME4(x, y, z, u)
 
 // version as displayed in UI and included in resources
-#ifndef SVN_PRE_RELEASE_VER
+#ifndef PRE_RELEASE_VER
  #ifndef VER_QUALIFIER
   #define CURR_VERSION_STRA QM(CURR_VERSION)
  #else
@@ -38,16 +34,26 @@
  #define UPDATE_CHECK_VER  TEXT(QM(CURR_VERSION))
 #else
  #ifndef VER_QUALIFIER
-   #define CURR_VERSION_STRA QM3(CURR_VERSION, ., SVN_PRE_RELEASE_VER)
-   #define VER_RESOURCE_STR  QM3(CURR_VERSION, .0., SVN_PRE_RELEASE_VER)
+   #define CURR_VERSION_STRA QM3(CURR_VERSION, ., PRE_RELEASE_VER)
+   #define VER_RESOURCE_STR  QM3(CURR_VERSION, .0., PRE_RELEASE_VER)
  #else
-   #define CURR_VERSION_STRA QM4(CURR_VERSION, ., SVN_PRE_RELEASE_VER, VER_QUALIFIER)
-   #define VER_RESOURCE_STR  QM4(CURR_VERSION, .0., SVN_PRE_RELEASE_VER, VER_QUALIFIER)
+   #define CURR_VERSION_STRA QM4(CURR_VERSION, ., PRE_RELEASE_VER, VER_QUALIFIER)
+   #define VER_RESOURCE_STR  QM4(CURR_VERSION, .0., PRE_RELEASE_VER, VER_QUALIFIER)
  #endif
- #define VER_RESOURCE      CURR_VERSION_COMMA,SVN_PRE_RELEASE_VER
- #define UPDATE_CHECK_VER  TEXT(QM(SVN_PRE_RELEASE_VER))
+ #define VER_RESOURCE      CURR_VERSION_COMMA,PRE_RELEASE_VER
+ #define UPDATE_CHECK_VER  TEXT(QM(PRE_RELEASE_VER))
 #endif
 #define CURR_VERSION_STR TEXT(CURR_VERSION_STRA)
 
-#define COPYRIGHT_STR      "Copyright 2006-2018 all authors (GPLv3)"
+#define COPYRIGHT_STR      "Copyright 2006-2021 all authors (GPLv3)"
+#if defined(RAMICRO)
+#define PUBLISHER_STR      "RA-MICRO"
+#else
 #define PUBLISHER_STR      "Krzysztof Kowalczyk"
+#endif
+
+#if defined(RAMICRO)
+#define APP_NAME_STR        "RA-MICRO PDF Viewer"
+#else
+#define APP_NAME_STR        "SumatraPDF"
+#endif

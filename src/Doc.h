@@ -1,7 +1,7 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
-// Doc is to EbookController what BaseEngine is to DisplayModel:
+// Doc is to EbookController what EngineBase is to DisplayModel:
 // It simply abstracts all document objects, allows querying the type, casting
 // to the wrapped object and present as much of the unified interface as
 // possible.
@@ -15,10 +15,10 @@ class PalmDoc;
 struct ImageData;
 class EbookTocVisitor;
 class HtmlFormatter;
-class HtmlFormatterArgs;
+struct HtmlFormatterArgs;
 
 enum class DocType { None, Epub, Fb2, Mobi, Pdb };
-enum class DocError { None, Unknown };
+enum class DocError { None, Unknown, NotSupported };
 
 class Doc {
   protected:
@@ -33,7 +33,7 @@ class Doc {
 
     // A copy of the file path which is needed in case of an error (else
     // the file path is supposed to be stored inside the wrapped *Doc)
-    AutoFreeW filePath;
+    AutoFreeWstr filePath;
 
     union {
         void* generic;
@@ -51,7 +51,9 @@ class Doc {
     ~Doc();
 
     void Clear();
-    Doc() { Clear(); }
+    Doc() {
+        Clear();
+    }
     explicit Doc(EpubDoc* doc);
     explicit Doc(Fb2Doc* doc);
     explicit Doc(MobiDoc* doc);
@@ -60,9 +62,15 @@ class Doc {
     void Delete();
 
     // note: find a better name, if possible
-    bool IsNone() const { return DocType::None == type; }
-    bool IsDocLoaded() const { return !IsNone(); }
-    DocType Type() const { return type; }
+    bool IsNone() const {
+        return DocType::None == type;
+    }
+    bool IsDocLoaded() const {
+        return !IsNone();
+    }
+    DocType Type() const {
+        return type;
+    }
 
     bool LoadingFailed() const {
         CrashIf((error != DocError::None) && !IsNone());
@@ -74,13 +82,13 @@ class Doc {
     const WCHAR* GetFilePath() const;
     const WCHAR* GetDefaultFileExt() const;
     WCHAR* GetProperty(DocumentProperty prop) const;
-    std::string_view GetHtmlData() const;
+    std::span<u8> GetHtmlData() const;
 
     ImageData* GetCoverImage() const;
     bool HasToc() const;
     bool ParseToc(EbookTocVisitor* visitor) const;
     HtmlFormatter* CreateFormatter(HtmlFormatterArgs* args) const;
 
+    static bool IsSupportedFileType(Kind kind);
     static Doc CreateFromFile(const WCHAR* filePath);
-    static bool IsSupportedFile(const WCHAR* filePath, bool sniff = false);
 };

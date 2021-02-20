@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 // TODO: this is meant to evolve into a scroll bar (which can also serve
@@ -33,12 +33,13 @@ class ScrollBar : public Control {
 
   public:
     ScrollBar(int onOverDy = 12, int inactiveDy = 5);
-    ~ScrollBar() {}
-    virtual Size Measure(const Size availableSize);
-    virtual void NotifyMouseEnter();
-    virtual void NotifyMouseLeave();
+    ~ScrollBar() {
+    }
+    Size Measure(const Size availableSize) override;
+    void Paint(Graphics* gfx, int offX, int offY) override;
 
-    virtual void Paint(Graphics* gfx, int offX, int offY);
+    void NotifyMouseEnter() override;
+    void NotifyMouseLeave() override;
 
     void SetFilled(float perc);
     float GetPercAt(int x);

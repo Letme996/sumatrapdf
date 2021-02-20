@@ -15,12 +15,12 @@ import (
 	"github.com/goamz/goamz/s3"
 )
 
-var (
-	s3AwsAccess string
-	s3AwsSecret string
-	// client can change bucket
-	s3BucketName = "kjkpub"
-)
+// S3Client describes s3 client
+type S3Client struct {
+	Access string
+	Secret string
+	Bucket string
+}
 
 func md5B64OfBytes(d []byte) string {
 	md5Sum := md5.Sum(d)
@@ -29,49 +29,46 @@ func md5B64OfBytes(d []byte) string {
 
 func md5B64OfFile(path string) string {
 	d, err := ioutil.ReadFile(path)
-	fatalIfErr(err)
+	panicIfErr(err)
 	return md5B64OfBytes(d)
 }
 
-func s3VerifyHasSecrets() {
-	fatalIf(s3AwsAccess == "", "invalid s3AwsAccess\n")
-	fatalIf(s3AwsSecret == "", "invalid s3AwsSsecret\n")
-	fatalIf(s3AwsSecret == s3AwsAccess, "s3AwsSecret == s3AwsAccess")
+// VerifyHasSecrets must be called before any other call
+func (c *S3Client) VerifyHasSecrets() {
+	fatalIf(c.Access == "", "invalid Access\n")
+	fatalIf(c.Secret == "", "invalid Secret\n")
+	fatalIf(c.Secret == c.Access, "Secret == Access")
 }
 
-// must be called before any other call
-func s3SetSecrets(access, secret string) {
-	s3AwsAccess = access
-	s3AwsSecret = secret
-	s3VerifyHasSecrets()
-}
-
-//Note: http.DefaultClient is more robust than aws.RetryingClient
-//(which fails for me with a timeout for large files e.g. ~6MB)
-func getS3Client() *http.Client {
+// GetClient returns http.Client
+// Note: http.DefaultClient is more robust than aws.RetryingClient
+// (which fails for me with a timeout for large files e.g. ~6MB)
+func (c *S3Client) GetClient() *http.Client {
 	// return aws.RetryingClient
 	return http.DefaultClient
 }
 
-func s3GetBucket() *s3.Bucket {
-	s3VerifyHasSecrets()
+// GetBucket returns a bucket
+func (c *S3Client) GetBucket() *s3.Bucket {
+	c.VerifyHasSecrets()
 	auth := aws.Auth{
-		AccessKey: s3AwsAccess,
-		SecretKey: s3AwsSecret,
+		AccessKey: c.Access,
+		SecretKey: c.Secret,
 	}
 	// Note: it's important that region is aws.USEast. This is where my bucket
 	// is and giving a different region will fail
 	// TODO: make aws.USEast a variable s3BucketRegion, to allow over-ride
-	s3Obj := s3.New(auth, aws.USEast, getS3Client())
-	return s3Obj.Bucket(s3BucketName)
+	s3Obj := s3.New(auth, aws.USEast, c.GetClient())
+	return s3Obj.Bucket(c.Bucket)
 }
 
-func s3UploadFileReader(pathRemote, pathLocal string, public bool) error {
-	fmt.Printf("Uploading '%s' as '%s'. ", pathLocal, pathRemote)
+// UploadFileReader uploads file from a reader
+func (c *S3Client) UploadFileReader(pathRemote, pathLocal string, public bool) error {
+	logf("Uploading '%s' as '%s'. ", pathLocal, pathRemote)
 	start := time.Now()
 	opts := s3.Options{}
 	opts.ContentMD5 = md5B64OfFile(pathLocal)
-	bucket := s3GetBucket()
+	bucket := c.GetBucket()
 	mimeType := mime.TypeByExtension(filepath.Ext(pathLocal))
 	fileSize := fileSizeMust(pathLocal)
 	perm := s3.Private
@@ -86,16 +83,17 @@ func s3UploadFileReader(pathRemote, pathLocal string, public bool) error {
 	err = bucket.PutReader(pathRemote, f, fileSize, mimeType, perm, opts)
 	//appendTiming(time.Since(start), fmt.Sprintf("Upload of %s, size: %d", pathRemote, fileSize))
 	if err != nil {
-		fmt.Printf("Failed with %s\n", err)
+		logf("Failed with %s\n", err)
 	} else {
-		fmt.Printf("Done in %s\n", time.Since(start))
+		logf("Done in %s\n", time.Since(start))
 	}
 	return err
 }
 
-func s3UploadFile(pathRemote, pathLocal string, public bool) error {
-	fmt.Printf("Uploading '%s' as '%s'\n", pathLocal, pathRemote)
-	bucket := s3GetBucket()
+// UploadFile uploads a file
+func (c *S3Client) UploadFile(pathRemote, pathLocal string, public bool) error {
+	logf("Uploading '%s' as '%s'\n", pathLocal, pathRemote)
+	bucket := c.GetBucket()
 	d, err := ioutil.ReadFile(pathLocal)
 	if err != nil {
 		return err
@@ -110,9 +108,10 @@ func s3UploadFile(pathRemote, pathLocal string, public bool) error {
 	return bucket.Put(pathRemote, d, mimeType, perm, opts)
 }
 
-func s3UploadString(pathRemote string, s string, public bool) error {
-	fmt.Printf("Uploading string of length %d  as '%s'\n", len(s), pathRemote)
-	bucket := s3GetBucket()
+// UploadString uploads a string
+func (c *S3Client) UploadString(pathRemote string, s string, public bool) error {
+	logf("Uploading string of length %d  as '%s'\n", len(s), pathRemote)
+	bucket := c.GetBucket()
 	d := []byte(s)
 	mimeType := mime.TypeByExtension(filepath.Ext(pathRemote))
 	opts := s3.Options{}
@@ -124,12 +123,13 @@ func s3UploadString(pathRemote string, s string, public bool) error {
 	return bucket.Put(pathRemote, d, mimeType, perm, opts)
 }
 
-func s3UploadFiles(s3Dir string, dir string, files []string) error {
+// UploadFiles uploads multiple files
+func (c *S3Client) UploadFiles(s3Dir string, dir string, files []string) error {
 	n := len(files) / 2
 	for i := 0; i < n; i++ {
 		pathLocal := filepath.Join(dir, files[2*i])
 		pathRemote := files[2*i+1]
-		err := s3UploadFileReader(s3Dir+pathRemote, pathLocal, true)
+		err := c.UploadFileReader(s3Dir+pathRemote, pathLocal, true)
 		if err != nil {
 			return fmt.Errorf("failed to upload '%s' as '%s', err: %s", pathLocal, pathRemote, err)
 		}
@@ -137,16 +137,18 @@ func s3UploadFiles(s3Dir string, dir string, files []string) error {
 	return nil
 }
 
-func s3Delete(path string) error {
-	bucket := s3GetBucket()
+// Delete deletes a file
+func (c *S3Client) Delete(path string) error {
+	bucket := c.GetBucket()
 	return bucket.Del(path)
 }
 
-func s3Exists(s3Path string) bool {
-	bucket := s3GetBucket()
+// Exists returns true if a file exists
+func (c *S3Client) Exists(s3Path string) bool {
+	bucket := c.GetBucket()
 	exists, err := bucket.Exists(s3Path)
 	if err != nil {
-		fmt.Printf("bucket.Exists('%s') failed with %s\n", s3Path, err)
+		logf("bucket.Exists('%s') failed with %s\n", s3Path, err)
 		return false
 	}
 	return exists

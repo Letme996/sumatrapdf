@@ -1,64 +1,51 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
-class ChmDoc;
+struct ChmDoc;
 struct ChmTocTraceItem;
 class HtmlWindow;
 class HtmlWindowCallback;
-class ChmCacheEntry;
+struct ChmCacheEntry;
 
-class ChmModel : public Controller {
-  public:
+struct ChmModel : Controller {
     explicit ChmModel(ControllerCallback* cb);
     ~ChmModel() override;
 
     // meta data
-    const WCHAR* FilePath() const override { return fileName; }
-    const WCHAR* DefaultFileExt() const override { return L".chm"; }
+    const WCHAR* FilePath() const override;
+    const WCHAR* DefaultFileExt() const override;
     int PageCount() const override;
     WCHAR* GetProperty(DocumentProperty prop) override;
 
     // page navigation (stateful)
-    int CurrentPageNo() const override { return currentPageNo; }
-    void GoToPage(int pageNo, bool addNavPoint) override {
-        UNUSED(addNavPoint);
-        CrashIf(!ValidPageNo(pageNo));
-        if (ValidPageNo(pageNo))
-            DisplayPage(pages.at(pageNo - 1));
-    }
+    int CurrentPageNo() const override;
+    void GoToPage(int pageNo, bool addNavPoint) override;
     bool CanNavigate(int dir) const override;
     void Navigate(int dir) override;
 
     // view settings
-    void SetDisplayMode(DisplayMode mode, bool keepContinuous = false) override {
-        UNUSED(mode);
-        UNUSED(keepContinuous); /* not supported */
-    }
-    DisplayMode GetDisplayMode() const override { return DM_SINGLE_PAGE; }
-    void SetPresentationMode(bool enable) override { UNUSED(enable); /* not supported */ }
-    void SetZoomVirtual(float zoom, PointI* fixPt) override;
+    void SetDisplayMode(DisplayMode mode, bool keepContinuous = false) override;
+    DisplayMode GetDisplayMode() const override;
+    void SetPresentationMode(bool enable) override;
+    void SetZoomVirtual(float zoom, Point* fixPt) override;
     float GetZoomVirtual(bool absolute = false) const override;
     float GetNextZoomStep(float towards) const override;
-    void SetViewPortSize(SizeI size) override { UNUSED(size); /* not needed(?) */ }
+    void SetViewPortSize(Size size) override;
 
     // table of contents
-    bool HasTocTree() const override;
-    DocTocItem* GetTocTree() override;
-    void ScrollToLink(PageDestination* dest) override;
+    TocTree* GetToc() override;
+    void ScrollToLink(PageDestination* link) override;
     PageDestination* GetNamedDest(const WCHAR* name) override;
 
-    // state export
-    void UpdateDisplayState(DisplayState* ds) override;
+    void GetDisplayState(DisplayState* ds) override;
     // asynchronously calls saveThumbnail (fails silently)
-    void CreateThumbnail(SizeI size, const onBitmapRenderedCb& saveThumbnail) override;
+    void CreateThumbnail(Size size, const onBitmapRenderedCb& saveThumbnail) override;
 
     // for quick type determination and type-safe casting
-    ChmModel* AsChm() override { return this; }
+    ChmModel* AsChm() override;
 
-    static bool IsSupportedFile(const WCHAR* fileName, bool sniff = false);
     static ChmModel* Create(const WCHAR* fileName, ControllerCallback* cb = nullptr);
 
-  public:
     // the following is specific to ChmModel
 
     bool SetParentHwnd(HWND hwnd);
@@ -68,26 +55,28 @@ class ChmModel : public Controller {
     void FindInCurrentPage();
     void SelectAll();
     void CopySelection();
-    LRESULT PassUIMsg(UINT msg, WPARAM wParam, LPARAM lParam);
+    LRESULT PassUIMsg(UINT msg, WPARAM wp, LPARAM lp);
 
     // for HtmlWindowCallback (called through htmlWindowCb)
     bool OnBeforeNavigate(const WCHAR* url, bool newWindow);
     void OnDocumentComplete(const WCHAR* url);
     void OnLButtonDown();
-    const unsigned char* GetDataForUrl(const WCHAR* url, size_t* len);
-    void DownloadData(const WCHAR* url, const unsigned char* data, size_t len);
+    std::span<u8> GetDataForUrl(const WCHAR* url);
+    void DownloadData(const WCHAR* url, std::span<u8> data);
 
-  protected:
-    AutoFreeW fileName;
-    ChmDoc* doc;
+    static bool IsSupportedFileType(Kind);
+
+    AutoFreeWstr fileName;
+    ChmDoc* doc = nullptr;
+    TocTree* tocTree = nullptr;
     CRITICAL_SECTION docAccess;
-    Vec<ChmTocTraceItem>* tocTrace;
+    Vec<ChmTocTraceItem>* tocTrace = nullptr;
 
     WStrList pages;
-    int currentPageNo;
-    HtmlWindow* htmlWindow;
-    HtmlWindowCallback* htmlWindowCb;
-    float initZoom;
+    int currentPageNo = 1;
+    HtmlWindow* htmlWindow = nullptr;
+    HtmlWindowCallback* htmlWindowCb = nullptr;
+    float initZoom = INVALID_ZOOM;
 
     Vec<ChmCacheEntry*> urlDataCache;
     // use a pool allocator for strings that aren't freed until this ChmModel

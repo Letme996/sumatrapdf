@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
@@ -39,7 +39,7 @@ static void StrReplaceTest() {
         {L"a", L"b", nullptr, nullptr},
     };
     for (size_t i = 0; i < dimof(data); i++) {
-        AutoFreeW result(str::Replace(data[i].string, data[i].find, data[i].replace));
+        AutoFreeWstr result(str::Replace(data[i].string, data[i].find, data[i].replace));
         utassert(str::Eq(result, data[i].result));
     }
 }
@@ -106,17 +106,17 @@ static void StrIsDigitTest() {
 static void StrConvTest() {
     WCHAR wbuf[4];
     char cbuf[4];
-    size_t conv = str::Utf8ToWcharBuf("testing", 4, wbuf, dimof(wbuf));
+    size_t conv = strconv::Utf8ToWcharBuf("testing", 4, wbuf, dimof(wbuf));
     utassert(conv == 3 && str::Eq(wbuf, L"tes"));
-    conv = str::WcharToUtf8Buf(L"abc", cbuf, dimof(cbuf));
+    conv = strconv::WcharToUtf8Buf(L"abc", cbuf, dimof(cbuf));
     utassert(conv == 3 && str::Eq(cbuf, "abc"));
-    conv = str::Utf8ToWcharBuf("ab\xF0\x90\x82\x80", 6, wbuf, dimof(wbuf));
+    conv = strconv::Utf8ToWcharBuf("ab\xF0\x90\x82\x80", 6, wbuf, dimof(wbuf));
     utassert(conv == 3 && str::StartsWith(wbuf, L"ab") && wbuf[2] == 0xD800);
-    conv = str::Utf8ToWcharBuf("ab\xF0\x90\x82\x80", 6, wbuf, dimof(wbuf) - 1);
+    conv = strconv::Utf8ToWcharBuf("ab\xF0\x90\x82\x80", 6, wbuf, dimof(wbuf) - 1);
     utassert(conv == 1 && str::Eq(wbuf, L"a"));
-    conv = str::WcharToUtf8Buf(L"ab\u20AC", cbuf, dimof(cbuf));
+    conv = strconv::WcharToUtf8Buf(L"ab\u20AC", cbuf, dimof(cbuf));
     utassert(conv == 0 && str::Eq(cbuf, ""));
-    conv = str::WcharToUtf8Buf(L"abcd", cbuf, dimof(cbuf));
+    conv = strconv::WcharToUtf8Buf(L"abcd", cbuf, dimof(cbuf));
     utassert(conv == 0 && str::Eq(cbuf, ""));
 }
 
@@ -124,7 +124,7 @@ static void StrUrlExtractTest() {
     utassert(!url::GetFileName(L""));
     utassert(!url::GetFileName(L"#hash_only"));
     utassert(!url::GetFileName(L"?query=only"));
-    AutoFreeW fileName(url::GetFileName(L"http://example.net/filename.ext"));
+    AutoFreeWstr fileName(url::GetFileName(L"http://example.net/filename.ext"));
     utassert(str::Eq(fileName, L"filename.ext"));
     fileName.Set(url::GetFileName(L"http://example.net/filename.ext#with_hash"));
     utassert(str::Eq(fileName, L"filename.ext"));
@@ -136,9 +136,148 @@ static void StrUrlExtractTest() {
     utassert(str::Eq((char*)fileName.Get(), "\xAC\x20"));
 }
 
+static void ParseUntilTest() {
+    const char* txt = "foo\nbar\n\nla\n";
+    const char* a[] = {
+        "foo",
+        "bar",
+        "",
+        "la",
+    };
+    size_t nEls = dimof(a);
+    {
+        std::string_view sv(txt);
+        size_t i = 0;
+        while (true) {
+            auto el = sv::ParseUntil(sv, '\n');
+            const char* got = el.data();
+            if (got == nullptr) {
+                utassert(i == dimof(a));
+                break;
+            }
+            const char* s = a[i];
+            size_t len = str::Len(s);
+            utassert(len == el.size());
+            utassert(str::EqN(s, got, len));
+            i++;
+            utassert(i <= nEls);
+        }
+    }
+    {
+        std::string_view sv(txt, str::Len(txt) - 1);
+        size_t i = 0;
+        while (true) {
+            auto el = sv::ParseUntilBack(sv, '\n');
+            const char* got = el.data();
+            if (got == nullptr) {
+                utassert(i == dimof(a));
+                break;
+            }
+            const char* s = a[nEls - 1 - i];
+            size_t len = str::Len(s);
+            utassert(len == el.size());
+            utassert(str::EqN(s, got, len));
+            i++;
+            utassert(i <= nEls);
+        }
+    }
+}
+
+void strStrTest() {
+    {
+        // verify that we use buf for initial allocations
+        str::Str str;
+        char* buf = str.Get();
+        str.Append("blah");
+        char* buf2 = str.Get();
+        utassert(buf == buf2);
+        str::Eq(buf2, "blah");
+        str.Append("lost");
+        buf2 = str.Get();
+        str::Eq(buf2, "blahlost");
+        utassert(buf == buf2);
+        str.Reset();
+        for (int i = 0; i < str::Str::kBufChars + 4; i++) {
+            str.AppendChar((char)i);
+        }
+        buf2 = str.Get();
+        // we should have allocated buf on the heap
+        utassert(buf != buf2);
+        for (int i = 0; i < str::Str::kBufChars + 4; i++) {
+            char c = str.at(i);
+            utassert(c == (char)i);
+        }
+    }
+
+    {
+        // verify that initialCapacity hint works
+        str::Str str(1024);
+        char* buf = nullptr;
+
+        for (int i = 0; i < 50; i++) {
+            str.Append("01234567890123456789");
+            if (i == 2) {
+                // we filled Str::buf (32 bytes) by putting 20 bytes
+                // and allocated heap for 1024 bytes. Remember the
+                buf = str.Get();
+            }
+        }
+        // we've appended 100*10 = 1000 chars, which is less than 1024
+        // so Str::buf should be the same as buf
+        char* buf2 = str.Get();
+        utassert(buf == buf2);
+    }
+}
+
+void strWStrTest() {
+    {
+        // verify that we use buf for initial allocations
+        str::WStr str;
+        WCHAR* buf = str.Get();
+        str.Append(L"blah");
+        WCHAR* buf2 = str.Get();
+        utassert(buf == buf2);
+        str::Eq(buf2, L"blah");
+        str.Append(L"lost");
+        buf2 = str.Get();
+        str::Eq(buf2, L"blahlost");
+        utassert(buf == buf2);
+        str.Reset();
+        for (int i = 0; i < str::Str::kBufChars + 4; i++) {
+            str.AppendChar((WCHAR)i);
+        }
+        buf2 = str.Get();
+        // we should have allocated buf on the heap
+        utassert(buf != buf2);
+        for (int i = 0; i < str::Str::kBufChars + 4; i++) {
+            WCHAR c = str.at(i);
+            utassert(c == (WCHAR)i);
+        }
+    }
+
+    {
+        // verify that initialCapacity hint works
+        str::WStr str(1024);
+        WCHAR* buf = nullptr;
+
+        for (int i = 0; i < 50; i++) {
+            str.Append(L"01234567890123456789");
+            if (i == 2) {
+                // we filled Str::buf (32 bytes) by putting 20 bytes
+                // and allocated heap for 1024 bytes. Remember the
+                buf = str.Get();
+            }
+        }
+        // we've appended 100*10 = 1000 chars, which is less than 1024
+        // so WStr::buf should be the same as buf
+        WCHAR* buf2 = str.Get();
+        utassert(buf == buf2);
+    }
+}
+
 void StrTest() {
     WCHAR buf[32];
-    WCHAR* str = L"a string";
+    const WCHAR* str = L"a string";
     utassert(str::Len(str) == 8);
     utassert(str::Eq(str, L"a string") && str::Eq(str, str));
     utassert(!str::Eq(str, nullptr) && !str::Eq(str, L"A String"));
@@ -159,19 +298,19 @@ void StrTest() {
 
     str = str::Dup(buf);
     utassert(str::Eq(str, buf));
-    free(str);
+    str::Free(str);
     str = str::DupN(buf, 4);
     utassert(str::Eq(str, L"a st"));
-    free(str);
+    str::Free(str);
     str = str::Format(L"%s", buf);
     utassert(str::Eq(str, buf));
-    free(str);
+    str::Free(str);
     {
-        AutoFreeW large(AllocArray<WCHAR>(2000));
+        AutoFreeWstr large(AllocArray<WCHAR>(2000));
         memset(large, 0x11, 1998);
-        str = str::Format(L"%s", large);
+        str = str::Format(L"%s", large.Get());
         utassert(str::Eq(str, large));
-        free(str);
+        str::Free(str);
     }
 #if 0
     // TODO: this test slows down DEBUG builds significantly
@@ -182,13 +321,13 @@ void StrTest() {
 #endif
     str = str::Join(buf, buf);
     utassert(str::Len(str) == 2 * str::Len(buf));
-    free(str);
+    str::Free(str);
     str = str::Join(nullptr, L"ab");
     utassert(str::Eq(str, L"ab"));
-    free(str);
+    str::Free(str);
     str = str::Join(L"\uFDEF", L"\uFFFF");
     utassert(str::Eq(str, L"\uFDEF\uFFFF"));
-    free(str);
+    str::Free(str);
 
     str::BufSet(buf, dimof(buf), L"abc\1efg\1");
     size_t count = str::TransChars(buf, L"ace", L"ACE");
@@ -219,7 +358,7 @@ void StrTest() {
 
     str = L"[Open(\"filename.pdf\",0,1,0)]";
     {
-        UINT u1 = 0;
+        uint u1 = 0;
         WCHAR* str1 = nullptr;
         const WCHAR* end = str::Parse(str, L"[Open(\"%s\",%? 0,%u,0)]", &str1, &u1);
         utassert(end && !*end);
@@ -228,8 +367,8 @@ void StrTest() {
     }
 
     {
-        UINT u1 = 0;
-        AutoFreeW str1;
+        uint u1 = 0;
+        AutoFreeWstr str1;
         const WCHAR* end = str::Parse(str, L"[Open(\"%S\",0%?,%u,0)]", &str1, &u1);
         utassert(end && !*end);
         utassert(u1 == 1 && str::Eq(str1, L"filename.pdf"));
@@ -309,7 +448,7 @@ void StrTest() {
         utassert(str::Eq(str1, "ansi string") && i == -30 && j == 20 && f == 1.5f);
     }
     {
-        AutoFreeW str1;
+        AutoFreeWstr str1;
         int i, j;
         float f;
         utassert(str::Parse(L"wide string, -30-20 1.5%", L"%S,%d%?-%2u%f%%%$", &str1, &i, &j, &f));
@@ -336,11 +475,11 @@ void StrTest() {
     // the test string should only contain ASCII characters,
     // as all others might not be available in all code pages
 #define TEST_STRING "aBc"
-    OwnedData strA = str::conv::ToAnsi(TEXT(TEST_STRING));
+    AutoFree strA = strconv::WstrToAnsi(TEXT(TEST_STRING));
     utassert(str::Eq(strA.Get(), TEST_STRING));
-    str = str::conv::FromAnsi(strA.Get());
+    str = strconv::FromAnsi(strA.Get());
     utassert(str::Eq(str, TEXT(TEST_STRING)));
-    free(str);
+    str::Free(str);
 #undef TEST_STRING
 
     utassert(str::IsDigit('0') && str::IsDigit(TEXT('5')) && str::IsDigit(L'9'));
@@ -366,7 +505,7 @@ void StrTest() {
     };
 
     for (int i = 0; i < dimof(formatNumData); i++) {
-        AutoFreeW tmp(str::FormatNumWithThousandSep(formatNumData[i].number, LOCALE_INVARIANT));
+        AutoFreeWstr tmp(str::FormatNumWithThousandSep(formatNumData[i].number, LOCALE_INVARIANT));
         utassert(str::Eq(tmp, formatNumData[i].result));
     }
 
@@ -379,7 +518,7 @@ void StrTest() {
     };
 
     for (int i = 0; i < dimof(formatFloatData); i++) {
-        AutoFreeW tmp(str::FormatFloatWithThousandSep(formatFloatData[i].number, LOCALE_INVARIANT));
+        AutoFreeWstr tmp(str::FormatFloatWithThousandSep(formatFloatData[i].number, LOCALE_INVARIANT));
         utassert(str::Eq(tmp, formatFloatData[i].result));
     }
 
@@ -403,7 +542,7 @@ void StrTest() {
     };
 
     for (int i = 0; i < dimof(formatRomanData); i++) {
-        AutoFreeW tmp(str::FormatRomanNumeral(formatRomanData[i].number));
+        AutoFreeWstr tmp(str::FormatRomanNumeral(formatRomanData[i].number));
         utassert(str::Eq(tmp, formatRomanData[i].result));
     }
 
@@ -478,20 +617,20 @@ void StrTest() {
     }
 
     {
-        auto tmp = str::ToMultiByte("abc", 9876, 123456);
+        AutoFree tmp = strconv::ToMultiByte("abc", 9876, 123456);
         utassert(!tmp.Get());
     }
     {
-        auto tmp = str::ToMultiByte(L"abc", 98765);
+        AutoFree tmp = strconv::WstrToCodePage(L"abc", 98765);
         utassert(!tmp.Get());
     }
     {
-        AutoFreeW tmp(str::conv::FromCodePage("abc", 12345));
-        utassert(!tmp.Get());
+        AutoFreeWstr tmp(strconv::FromCodePage("abc", 12345));
+        utassert(str::IsEmpty(tmp.Get()));
     }
     {
-        auto tmp = str::conv::ToCodePage(L"abc", 987654);
-        utassert(!tmp.Get());
+        AutoFree tmp = strconv::WstrToCodePage(L"abc", 987654);
+        utassert(str::IsEmpty(tmp.Get()));
     }
 
     {
@@ -526,7 +665,7 @@ void StrTest() {
 
     {
         for (int c = 0x00; c < 0x100; c++) {
-            utassert(!!isspace((unsigned char)c) == str::IsWs((char)c));
+            utassert(!!isspace((u8)c) == str::IsWs((char)c));
         }
         for (int c = 0x00; c < 0x10000; c++) {
             utassert(!!iswspace((WCHAR)c) == str::IsWs((WCHAR)c));
@@ -553,9 +692,12 @@ void StrTest() {
         utassert(str::Eq(str::FindI("test", "st"), "st"));
     }
 
+    strStrTest();
+    strWStrTest();
     StrIsDigitTest();
     StrReplaceTest();
     StrSeqTest();
     StrConvTest();
     StrUrlExtractTest();
+    ParseUntilTest();
 }

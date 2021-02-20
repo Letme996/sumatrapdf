@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 /* Simple functions to make it easier to set/clear/test for bits in integers */
@@ -43,3 +43,17 @@ bool IsMaskSet(T v, T mask) {
 }
 
 } // namespace bit
+
+namespace bitmask {
+
+template <typename T>
+bool IsSet(T v, decltype(v) mask) {
+    return (v & mask) != 0;
+}
+
+template <typename T>
+bool IsClear(T v, decltype(v) mask) {
+    return (v & ~mask) == 0;
+}
+
+} // namespace bitmask

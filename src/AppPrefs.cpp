@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
@@ -7,16 +7,24 @@
 #include "utils/UITask.h"
 #include "utils/ScopedWin.h"
 
-#include "BaseEngine.h"
-#include "EbookEngine.h"
+#include "wingui/TreeModel.h"
 
+#include "Annotation.h"
+#include "EngineBase.h"
+#include "EngineEbook.h"
+
+#include "SumatraConfig.h"
+#include "DisplayMode.h"
 #include "SettingsStructs.h"
+#include "Controller.h"
+#include "DisplayModel.h"
 #include "FileHistory.h"
 #include "GlobalPrefs.h"
 #include "ProgressUpdateUI.h"
 #include "Notifications.h"
 #include "SumatraPDF.h"
-#include "ParseCommandLine.h"
+#include "TabInfo.h"
+#include "Flags.h"
 #include "WindowInfo.h"
 #include "AppPrefs.h"
 #include "AppTools.h"
@@ -24,7 +32,8 @@
 #include "Toolbar.h"
 #include "Translations.h"
 
-#define PREFS_FILE_NAME L"SumatraPDF-settings.txt"
+// SumatraPDF.cpp
+extern void RememberDefaultWindowPosition(WindowInfo* win);
 
 static WatchedFile* gWatchedSettingsFile = nullptr;
 
@@ -48,74 +57,130 @@ static int cmpFloat(const void* a, const void* b) {
 
 namespace prefs {
 
+const WCHAR* GetSettingsFileNameNoFree() {
+    if (gIsRaMicroBuild) {
+        return L"RAMicroPDF-settings.txt";
+    }
+    return L"SumatraPDF-settings.txt";
+}
+
 WCHAR* GetSettingsPath() {
-    return AppGenDataFilename(PREFS_FILE_NAME);
+    return AppGenDataFilename(GetSettingsFileNameNoFree());
 }
 
 /* Caller needs to prefs::CleanUp() */
 bool Load() {
     CrashIf(gGlobalPrefs);
 
-    std::unique_ptr<WCHAR> path(GetSettingsPath());
-    OwnedData prefsData(file::ReadFile(path.get()));
+    AutoFreeWstr path = GetSettingsPath();
+    AutoFree prefsData = file::ReadFile(path.Get());
+
     gGlobalPrefs = NewGlobalPrefs(prefsData.data);
     CrashAlwaysIf(!gGlobalPrefs);
+    auto* gprefs = gGlobalPrefs;
 
     // in pre-release builds between 3.1.10079 and 3.1.10377,
     // RestoreSession was a string with the additional option "auto"
     // TODO: remove this after 3.2 has been released
-#if defined(DEBUG) || defined(SVN_PRE_RELEASE_VER)
-    if (!gGlobalPrefs->restoreSession && prefsData.data && str::Find(prefsData.data, "\nRestoreSession = auto")) {
-        gGlobalPrefs->restoreSession = true;
+#if defined(DEBUG) || defined(PRE_RELEASE_VER)
+    if (!gprefs->restoreSession && prefsData.data && str::Find(prefsData.data, "\nRestoreSession = auto")) {
+        gprefs->restoreSession = true;
     }
 #endif
 
 #ifdef DISABLE_EBOOK_UI
     if (!prefsData || !str::Find(prefsData, "UseFixedPageUI =")) {
-        gGlobalPrefs->ebookUI.useFixedPageUI = gGlobalPrefs->chmUI.useFixedPageUI = true;
+        gprefs->ebookUI.useFixedPageUI = gprefs->chmUI.useFixedPageUI = true;
     }
 #endif
 #ifdef DISABLE_TABS
     if (!prefsData || !str::Find(prefsData, "UseTabs =")) {
-        gGlobalPrefs->useTabs = false;
+        gprefs->useTabs = false;
     }
 #endif
 
-    if (!gGlobalPrefs->uiLanguage || !trans::ValidateLangCode(gGlobalPrefs->uiLanguage)) {
+    if (!gprefs->uiLanguage || !trans::ValidateLangCode(gprefs->uiLanguage)) {
         // guess the ui language on first start
-        str::ReplacePtr(&gGlobalPrefs->uiLanguage, trans::DetectUserLang());
+        str::ReplacePtr(&gprefs->uiLanguage, trans::DetectUserLang());
     }
-    gGlobalPrefs->lastPrefUpdate = file::GetModificationTime(path.get());
-    gGlobalPrefs->defaultDisplayModeEnum = conv::ToDisplayMode(gGlobalPrefs->defaultDisplayMode, DM_AUTOMATIC);
-    gGlobalPrefs->defaultZoomFloat = conv::ToZoom(gGlobalPrefs->defaultZoom, ZOOM_ACTUAL_SIZE);
-    CrashIf(!IsValidZoom(gGlobalPrefs->defaultZoomFloat));
+    gprefs->lastPrefUpdate = file::GetModificationTime(path.Get());
+    gprefs->defaultDisplayModeEnum = DisplayModeFromString(gprefs->defaultDisplayMode, DisplayMode::Automatic);
+    gprefs->defaultZoomFloat = ZoomFromString(gprefs->defaultZoom, ZOOM_ACTUAL_SIZE);
+    CrashIf(!IsValidZoom(gprefs->defaultZoomFloat));
 
-    int weekDiff = GetWeekCount() - gGlobalPrefs->openCountWeek;
-    gGlobalPrefs->openCountWeek = GetWeekCount();
+    int weekDiff = GetWeekCount() - gprefs->openCountWeek;
+    gprefs->openCountWeek = GetWeekCount();
     if (weekDiff > 0) {
         // "age" openCount statistics (cut in in half after every week)
-        for (DisplayState* ds : *gGlobalPrefs->fileStates) {
+        for (DisplayState* ds : *gprefs->fileStates) {
             ds->openCount >>= weekDiff;
         }
     }
 
     // make sure that zoom levels are in the order expected by DisplayModel
-    gGlobalPrefs->zoomLevels->Sort(cmpFloat);
-    while (gGlobalPrefs->zoomLevels->size() > 0 && gGlobalPrefs->zoomLevels->at(0) < ZOOM_MIN) {
-        gGlobalPrefs->zoomLevels->PopAt(0);
+    gprefs->zoomLevels->Sort(cmpFloat);
+    while (gprefs->zoomLevels->size() > 0 && gprefs->zoomLevels->at(0) < ZOOM_MIN) {
+        gprefs->zoomLevels->PopAt(0);
     }
-    while (gGlobalPrefs->zoomLevels->size() > 0 && gGlobalPrefs->zoomLevels->Last() > ZOOM_MAX) {
-        gGlobalPrefs->zoomLevels->Pop();
+    while (gprefs->zoomLevels->size() > 0 && gprefs->zoomLevels->Last() > ZOOM_MAX) {
+        gprefs->zoomLevels->Pop();
     }
 
     // TODO: verify that all states have a non-nullptr file path?
-    gFileHistory.UpdateStatesSource(gGlobalPrefs->fileStates);
-    SetDefaultEbookFont(gGlobalPrefs->ebookUI.fontName, gGlobalPrefs->ebookUI.fontSize);
+    gFileHistory.UpdateStatesSource(gprefs->fileStates);
+    SetDefaultEbookFont(gprefs->ebookUI.fontName, gprefs->ebookUI.fontSize);
 
-    if (!file::Exists(path.get())) {
+    if (!file::Exists(path.Get())) {
         Save();
     }
     return true;
+}
+
+static void RememberSessionState() {
+    Vec<SessionData*>* sessionData = gGlobalPrefs->sessionData;
+    ResetSessionState(sessionData);
+
+    if (!gGlobalPrefs->rememberOpenedFiles) {
+        return;
+    }
+
+    if (gWindows.size() == 0) {
+        return;
+    }
+
+    // don't remember the state if there's only one window with 1 or less
+    // opened document.
+    if (gWindows.size() == 1 && gWindows[0]->tabs.size() < 2) {
+        return;
+    }
+
+    for (auto* win : gWindows) {
+        if (win->tabs.size() == 0) {
+            continue;
+        }
+        SessionData* data = NewSessionData();
+        for (TabInfo* tab : win->tabs) {
+            DisplayState* ds = NewDisplayState(tab->filePath);
+            if (tab->ctrl) {
+                tab->ctrl->GetDisplayState(ds);
+            }
+            // TODO: pageNo should be good enough, as canvas size is restored as well
+            if (tab->AsEbook() && tab->ctrl) {
+                ds->pageNo = tab->ctrl->CurrentPageNo();
+            }
+            ds->showToc = tab->showToc;
+            *ds->tocState = tab->tocState;
+            data->tabStates->Append(NewTabState(ds));
+            DeleteDisplayState(ds);
+        }
+        data->tabIndex = win->tabs.Find(win->currentTab) + 1;
+        // TODO: allow recording this state without changing gGlobalPrefs
+        RememberDefaultWindowPosition(win);
+        data->windowState = gGlobalPrefs->windowState;
+        data->windowPos = gGlobalPrefs->windowPos;
+        data->sidebarDx = gGlobalPrefs->sidebarDx;
+        sessionData->Append(data);
+    }
 }
 
 // called whenever global preferences change or a file is
@@ -130,71 +195,77 @@ bool Save() {
     // update display states for all tabs
     for (WindowInfo* win : gWindows) {
         for (TabInfo* tab : win->tabs) {
-            UpdateTabFileDisplayStateForWin(win, tab);
+            UpdateTabFileDisplayStateForTab(tab);
         }
     }
+    RememberSessionState();
 
     // remove entries which should (no longer) be remembered
     gFileHistory.Purge(!gGlobalPrefs->rememberStatePerDocument);
     // update display mode and zoom fields from internal values
-    str::ReplacePtr(&gGlobalPrefs->defaultDisplayMode, conv::FromDisplayMode(gGlobalPrefs->defaultDisplayModeEnum));
-    conv::FromZoom(&gGlobalPrefs->defaultZoom, gGlobalPrefs->defaultZoomFloat);
+    str::ReplacePtr(&gGlobalPrefs->defaultDisplayMode, DisplayModeToString(gGlobalPrefs->defaultDisplayModeEnum));
+    ZoomToString(&gGlobalPrefs->defaultZoom, gGlobalPrefs->defaultZoomFloat);
 
-    std::unique_ptr<WCHAR> path(GetSettingsPath());
-    CrashIfDebugOnly(!path);
-    if (!path) {
+    AutoFreeWstr path = GetSettingsPath();
+    DebugCrashIf(!path.data);
+    if (!path.data) {
         return false;
     }
-    OwnedData prevPrefsData(file::ReadFile(path.get()));
-    size_t prefsDataSize = 0;
-    std::unique_ptr<char> prefsData(SerializeGlobalPrefs(gGlobalPrefs, prevPrefsData.data, &prefsDataSize));
-
-    CrashIf(!prefsData || 0 == prefsDataSize);
-    if (!prefsData || 0 == prefsDataSize) {
+    std::span<u8> prevPrefs = file::ReadFile(path.data);
+    const char* prevPrefsData = (char*)prevPrefs.data();
+    std::span<u8> prefs = SerializeGlobalPrefs(gGlobalPrefs, prevPrefsData);
+    defer {
+        str::Free(prevPrefs.data());
+        str::Free(prefs.data());
+        OutputDebugStringA("defer");
+    };
+    CrashIf(prefs.empty());
+    if (prefs.empty()) {
         return false;
     }
 
     // only save if anything's changed at all
-    if (prevPrefsData.size == prefsDataSize && str::Eq(prefsData.get(), prevPrefsData.data)) {
+    if (prevPrefs.size() == prefs.size() && str::Eq(prefs, prevPrefs)) {
         return true;
     }
 
-    bool ok = file::WriteFile(path.get(), prefsData.get(), prefsDataSize);
+    bool ok = file::WriteFile(path.Get(), prefs);
     if (!ok) {
         return false;
     }
-    gGlobalPrefs->lastPrefUpdate = file::GetModificationTime(path.get());
+    gGlobalPrefs->lastPrefUpdate = file::GetModificationTime(path.Get());
     return true;
 }
 
 // refresh the preferences when a different SumatraPDF process saves them
 // or if they are edited by the user using a text editor
 bool Reload() {
-    std::unique_ptr<WCHAR> path(GetSettingsPath());
-    if (!file::Exists(path.get())) {
+    AutoFreeWstr path = GetSettingsPath();
+    if (!file::Exists(path)) {
         return false;
     }
 
     // make sure that the settings file is readable - else wait
     // a short while to prevent accidental dataloss
     int tryAgainCount = 5;
-    HANDLE h = file::OpenReadOnly(path.get());
+    HANDLE h = file::OpenReadOnly(path);
     while (INVALID_HANDLE_VALUE == h && tryAgainCount-- > 0) {
         Sleep(200);
-        h = file::OpenReadOnly(path.get());
+        h = file::OpenReadOnly(path);
     }
     if (INVALID_HANDLE_VALUE == h) {
         // prefer not reloading to resetting all settings
         return false;
     }
 
-    ScopedHandle hScope(h);
+    AutoCloseHandle hScope(h);
 
-    FILETIME time = file::GetModificationTime(path.get());
-    if (FileTimeEq(time, gGlobalPrefs->lastPrefUpdate))
+    FILETIME time = file::GetModificationTime(path);
+    if (FileTimeEq(time, gGlobalPrefs->lastPrefUpdate)) {
         return true;
+    }
 
-    std::unique_ptr<char> uiLanguage(str::Dup(gGlobalPrefs->uiLanguage));
+    AutoFree uiLanguage = str::Dup(gGlobalPrefs->uiLanguage);
     bool showToolbar = gGlobalPrefs->showToolbar;
     bool invertColors = gGlobalPrefs->fixedPageUI.invertColors;
 
@@ -208,59 +279,26 @@ bool Reload() {
 
     // TODO: about window doesn't have to be at position 0
     if (gWindows.size() > 0 && gWindows.at(0)->IsAboutWindow()) {
-        gWindows.at(0)->DeleteInfotip();
+        gWindows.at(0)->HideToolTip();
         gWindows.at(0)->staticLinks.Reset();
         gWindows.at(0)->RedrawAll(true);
     }
 
-    if (!str::Eq(uiLanguage.get(), gGlobalPrefs->uiLanguage))
+    if (!str::Eq(uiLanguage.Get(), gGlobalPrefs->uiLanguage)) {
         SetCurrentLanguageAndRefreshUI(gGlobalPrefs->uiLanguage);
+    }
 
     for (WindowInfo* win : gWindows) {
-        if (gGlobalPrefs->showToolbar != showToolbar)
+        if (gGlobalPrefs->showToolbar != showToolbar) {
             ShowOrHideToolbar(win);
+        }
         UpdateFavoritesTree(win);
+        UpdateTreeCtrlColors(win);
     }
 
     UpdateDocumentColors();
-
+    UpdateFixedPageScrollbarsVisibility();
     return true;
-}
-
-void UpdateGlobalPrefs(const CommandLineInfo& i) {
-    if (i.inverseSearchCmdLine) {
-        str::ReplacePtr(&gGlobalPrefs->inverseSearchCmdLine, i.inverseSearchCmdLine);
-        gGlobalPrefs->enableTeXEnhancements = true;
-    }
-    gGlobalPrefs->fixedPageUI.invertColors = i.invertColors;
-
-    for (size_t n = 0; n < i.globalPrefArgs.size(); n++) {
-        if (str::EqI(i.globalPrefArgs.at(n), L"-esc-to-exit")) {
-            gGlobalPrefs->escToExit = true;
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-bgcolor") || str::EqI(i.globalPrefArgs.at(n), L"-bg-color")) {
-            // -bgcolor is for backwards compat (was used pre-1.3)
-            // -bg-color is for consistency
-            ParseColor(&gGlobalPrefs->mainWindowBackground, i.globalPrefArgs.at(++n));
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-set-color-range")) {
-            ParseColor(&gGlobalPrefs->fixedPageUI.textColor, i.globalPrefArgs.at(++n));
-            ParseColor(&gGlobalPrefs->fixedPageUI.backgroundColor, i.globalPrefArgs.at(++n));
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-fwdsearch-offset")) {
-            gGlobalPrefs->forwardSearch.highlightOffset = _wtoi(i.globalPrefArgs.at(++n));
-            gGlobalPrefs->enableTeXEnhancements = true;
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-fwdsearch-width")) {
-            gGlobalPrefs->forwardSearch.highlightWidth = _wtoi(i.globalPrefArgs.at(++n));
-            gGlobalPrefs->enableTeXEnhancements = true;
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-fwdsearch-color")) {
-            ParseColor(&gGlobalPrefs->forwardSearch.highlightColor, i.globalPrefArgs.at(++n));
-            gGlobalPrefs->enableTeXEnhancements = true;
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-fwdsearch-permanent")) {
-            gGlobalPrefs->forwardSearch.highlightPermanent = _wtoi(i.globalPrefArgs.at(++n));
-            gGlobalPrefs->enableTeXEnhancements = true;
-        } else if (str::EqI(i.globalPrefArgs.at(n), L"-manga-mode")) {
-            const WCHAR* s = i.globalPrefArgs.at(++n);
-            gGlobalPrefs->comicBookUI.cbxMangaMode = str::EqI(L"true", s) || str::Eq(L"1", s);
-        }
-    }
 }
 
 void CleanUp() {
@@ -273,12 +311,13 @@ void schedulePrefsReload() {
 }
 
 void RegisterForFileChanges() {
-    if (!HasPermission(Perm_SavePreferences))
+    if (!HasPermission(Perm_SavePreferences)) {
         return;
+    }
 
     CrashIf(gWatchedSettingsFile); // only call me once
-    std::unique_ptr<WCHAR> path(GetSettingsPath());
-    gWatchedSettingsFile = FileWatcherSubscribe(path.get(), schedulePrefsReload);
+    AutoFreeWstr path = GetSettingsPath();
+    gWatchedSettingsFile = FileWatcherSubscribe(path, schedulePrefsReload);
 }
 
 void UnregisterForFileChanges() {

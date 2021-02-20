@@ -1,9 +1,15 @@
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
+   License: Simplified BSD (see COPYING.BSD) */
+
 #include "utils/BaseUtil.h"
 #include "utils/ScopedWin.h"
 #include "utils/Dpi.h"
 #include "utils/WinUtil.h"
 
-#include "TabsCtrl.h"
+#include "wingui/WinGui.h"
+#include "wingui/Layout.h"
+#include "wingui/Window.h"
+#include "wingui/TabsCtrl.h"
 
 #define COL_BLACK RGB(0x00, 0x00, 0x00)
 #define COL_WHITE RGB(0xff, 0xff, 0xff)
@@ -24,62 +30,26 @@
 
 // TODO: implement a max width for the tab
 
-class ScopedGetDC {
-    HDC hdc;
-    HWND hwnd;
-
-  public:
-    explicit ScopedGetDC(HWND hwnd) {
-        this->hwnd = hwnd;
-        this->hdc = GetDC(hwnd);
-    }
-    ~ScopedGetDC() { ReleaseDC(hwnd, hdc); }
-    operator HDC() const { return hdc; }
-};
-
-class ScopedSelectHFONT {
-    HDC hdc;
-    HFONT prevFont;
-
-  public:
-    explicit ScopedSelectHFONT(HDC hdc, HFONT font) { prevFont = (HFONT)SelectObject(hdc, font); }
-
-    ~ScopedSelectHFONT() { SelectObject(hdc, prevFont); }
-};
-
-class ScopedSelectHHPEN {
-    HDC hdc;
-    HPEN prevPen;
-
-  public:
-    explicit ScopedSelectHHPEN(HDC hdc, HPEN pen) { prevPen = (HPEN)SelectObject(hdc, pen); }
-
-    ~ScopedSelectHHPEN() { SelectObject(hdc, prevPen); }
-};
-
 enum class Tab {
     Selected = 0,
     Background = 1,
     Highlighted = 2,
 };
 
-static std::wstring wstrFromUtf8(const std::string& str) {
-    WCHAR* s = str::conv::FromUtf8(str.c_str());
-    ;
-    std::wstring res(s);
-    free(s);
-    return res;
+static str::WStr wstrFromUtf8(const str::Str& str) {
+    AutoFreeWstr s = strconv::Utf8ToWstr(str.Get());
+    return str::WStr(s.AsView());
 }
 
-TabItem::TabItem(const std::string& title, const std::string& toolTip) {
+TabItem::TabItem(const std::string_view title, const std::string_view toolTip) {
     this->title = title;
     this->toolTip = toolTip;
 }
 
 class TabItemInfo {
   public:
-    std::wstring title;
-    std::wstring toolTip;
+    str::WStr title;
+    str::WStr toolTip;
 
     SIZE titleSize;
     // area for this tab item inside the tab window
@@ -91,31 +61,35 @@ class TabItemInfo {
 
 class TabsCtrlPrivate {
   public:
-    TabsCtrlPrivate(HWND hwnd) { this->hwnd = hwnd; }
-    ~TabsCtrlPrivate() { DeleteObject(font); }
+    TabsCtrlPrivate(HWND hwnd) {
+        this->hwnd = hwnd;
+    }
+    ~TabsCtrlPrivate() {
+        DeleteObject(font);
+    }
 
     HWND hwnd = nullptr;
     HFONT font = nullptr;
     // TODO: logFont is not used anymore, keep it for debugging?
-    LOGFONTW logFont; // info that corresponds to font
-    TEXTMETRIC fontMetrics;
-    int fontDy;
-    SIZE size;                  // current size of the control's window
-    SIZE idealSize;             // ideal size as calculated during layout
+    LOGFONTW logFont{}; // info that corresponds to font
+    TEXTMETRIC fontMetrics{};
+    int fontDy = 0;
+    SIZE size{};                // current size of the control's window
+    SIZE idealSize{};           // ideal size as calculated during layout
     int tabIdxUnderCursor = -1; // -1 if none under cursor
     bool isCursorOverClose = false;
 
-    std::shared_ptr<TabsCtrlState> state;
+    TabsCtrlState* state = nullptr;
 
     // each TabItemInfo orresponds to TabItem from state->tabs, same order
-    std::vector<std::unique_ptr<TabItemInfo>> tabInfos;
+    Vec<TabItemInfo*> tabInfos;
 };
 
 static long GetIdealDy(TabsCtrl* ctrl) {
     auto priv = ctrl->priv;
     int padTop = PADDING_TOP;
     int padBottom = PADDING_BOTTOM;
-    DpiScaleY2(priv->hwnd, padTop, padBottom);
+    DpiScale(priv->hwnd, padTop, padBottom);
     return priv->fontDy + padTop + padBottom;
 }
 
@@ -135,8 +109,8 @@ static HWND CreateTooltipForRect(HWND parent, const WCHAR* s, RECT& r) {
     ti.hinst = h;
     ti.lpszText = (WCHAR*)s;
     ti.rect = r;
-    SendMessage(hwnd, TTM_ADDTOOLW, 0, (LPARAM)&ti);
-    SendMessage(hwnd, TTM_ACTIVATE, TRUE, 0);
+    SendMessageW(hwnd, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    SendMessageW(hwnd, TTM_ACTIVATE, TRUE, 0);
     return hwnd;
 }
 
@@ -148,15 +122,9 @@ void LayoutTabs(TabsCtrl* ctrl) {
 
     int padLeft = PADDING_LEFT;
     int padRight = PADDING_RIGHT;
-    DpiScaleX2(priv->hwnd, padLeft, padRight);
+    DpiScale(priv->hwnd, padLeft, padRight);
 
-    // position y of title text and 'x' circle
-    long titleY = 0;
-    if (dy > priv->fontDy) {
-        titleY = (dy - priv->fontDy) / 2;
-    }
-
-    long closeButtonDy = (priv->fontMetrics.tmAscent / 2) + DpiScaleY(priv->hwnd, 1);
+    long closeButtonDy = (priv->fontMetrics.tmAscent / 2) + DpiScale(priv->hwnd, 1);
     long closeButtonY = (dy - closeButtonDy) / 2;
     if (closeButtonY < 0) {
         closeButtonDy = dy - 2;
@@ -168,7 +136,8 @@ void LayoutTabs(TabsCtrl* ctrl) {
         x += padLeft;
 
         auto sz = ti->titleSize;
-        titleY = 0;
+        // position y of title text and 'x' circle
+        long titleY = 0;
         if (dy > sz.cy) {
             titleY = (dy - sz.cy) / 2;
         }
@@ -182,11 +151,11 @@ void LayoutTabs(TabsCtrl* ctrl) {
         x += padRight;
         long dx = (x - xStart);
         ti->tabRect = MakeRect(xStart, 0, dx, dy);
-        if (!ti->toolTip.empty()) {
+        if (!ti->toolTip.IsEmpty()) {
             if (ti->hwndTooltip) {
                 DestroyWindow(ti->hwndTooltip);
             }
-            ti->hwndTooltip = CreateTooltipForRect(priv->hwnd, ti->toolTip.c_str(), ti->tabRect);
+            ti->hwndTooltip = CreateTooltipForRect(priv->hwnd, ti->toolTip.Get(), ti->tabRect);
         }
     }
     priv->idealSize = MakeSize(x, idealDy);
@@ -194,18 +163,15 @@ void LayoutTabs(TabsCtrl* ctrl) {
     TriggerRepaint(priv->hwnd);
 }
 
-static LRESULT CALLBACK TabsParentProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR uIdSubclass,
-                                       DWORD_PTR dwRefData) {
-    UNUSED(uIdSubclass);
-    UNUSED(dwRefData);
-
+static LRESULT CALLBACK TabsParentProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, [[maybe_unused]] UINT_PTR uIdSubclass,
+                                       [[maybe_unused]] DWORD_PTR dwRefData) {
     // TabsCtrl *w = (TabsCtrl *)dwRefData;
     // CrashIf(GetParent(ctrl->hwnd) != (HWND)lp);
 
     return DefSubclassProc(hwnd, msg, wp, lp);
 }
 
-static void PaintClose(HDC hdc, RECT& r, bool isHighlighted) {
+static void PaintClose(HWND hwnd, HDC hdc, RECT& r, bool isHighlighted) {
     auto x = r.left;
     auto y = r.top;
     auto dx = RectDx(r);
@@ -214,8 +180,8 @@ static void PaintClose(HDC hdc, RECT& r, bool isHighlighted) {
     COLORREF lineCol = COL_BLACK;
     if (isHighlighted) {
         int p = 3;
-        DpiScaleX(hdc, p);
-        ScopedBrush brush(CreateSolidBrush(COL_RED));
+        DpiScale(hwnd, p);
+        AutoDeleteBrush brush(CreateSolidBrush(COL_RED));
         RECT r2 = r;
         r2.left -= p;
         r2.right += p;
@@ -225,8 +191,8 @@ static void PaintClose(HDC hdc, RECT& r, bool isHighlighted) {
         lineCol = COL_WHITE;
     }
 
-    ScopedPen pen(CreatePen(PS_SOLID, 2, lineCol));
-    ScopedSelectHHPEN p(hdc, pen);
+    AutoDeletePen pen(CreatePen(PS_SOLID, 2, lineCol));
+    ScopedSelectPen p(hdc, pen);
     MoveToEx(hdc, x, y, nullptr);
     LineTo(hdc, x + dx, y + dy);
 
@@ -242,18 +208,18 @@ static void Paint(TabsCtrl* ctrl) {
     RECT rc = GetClientRect(hwnd);
     HDC hdc = BeginPaint(hwnd, &ps);
 
-    ScopedBrush brush(CreateSolidBrush(COL_LIGHTER_GRAY));
+    AutoDeleteBrush brush(CreateSolidBrush(COL_LIGHTER_GRAY));
     FillRect(hdc, &rc, brush);
 
-    ScopedSelectHFONT f(hdc, priv->font);
-    UINT opts = ETO_OPAQUE;
+    ScopedSelectFont f(hdc, priv->font);
+    uint opts = ETO_OPAQUE;
 
     int padLeft = PADDING_LEFT;
-    DpiScaleX(priv->hwnd, padLeft);
+    DpiScale(priv->hwnd, padLeft);
 
     int tabIdx = 0;
     for (const auto& ti : priv->tabInfos) {
-        if (ti->title.empty()) {
+        if (ti->title.IsEmpty()) {
             continue;
         }
         auto tabType = Tab::Background;
@@ -287,19 +253,19 @@ static void Paint(TabsCtrl* ctrl) {
         SetBkColor(hdc, bgCol);
 
         auto tabRect = ti->tabRect;
-        ScopedBrush brush2(CreateSolidBrush(bgCol));
+        AutoDeleteBrush brush2(CreateSolidBrush(bgCol));
         FillRect(hdc, &tabRect, brush2);
 
         auto pos = ti->titlePos;
         int x = pos.x;
         int y = pos.y;
-        const WCHAR* s = ti->title.data();
-        UINT sLen = (UINT)ti->title.size();
+        const WCHAR* s = ti->title.Get();
+        uint sLen = (uint)ti->title.size();
         ExtTextOutW(hdc, x, y, opts, nullptr, s, sLen, nullptr);
 
         if (paintClose) {
             bool isCursorOverClose = priv->isCursorOverClose && (tabIdx == priv->tabIdxUnderCursor);
-            PaintClose(hdc, ti->closeRect, isCursorOverClose);
+            PaintClose(hwnd, hdc, ti->closeRect, isCursorOverClose);
         }
 
         tabIdx++;
@@ -362,8 +328,8 @@ static void OnLeftButtonUp(TabsCtrl* ctrl) {
     }
 }
 
-static LRESULT CALLBACK TabsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
-    UNUSED(uIdSubclass);
+static LRESULT CALLBACK TabsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, [[maybe_unused]] UINT_PTR uIdSubclass,
+                                 DWORD_PTR dwRefData) {
     TabsCtrl* ctrl = (TabsCtrl*)dwRefData;
     TabsCtrlPrivate* priv = ctrl->priv;
     // CrashIf(ctrl->hwnd != (HWND)lp);
@@ -444,7 +410,7 @@ void SetFont(TabsCtrl* ctrl, HFONT font) {
     GetObject(font, sizeof(LOGFONTW), &priv->logFont);
 
     ScopedGetDC hdc(priv->hwnd);
-    ScopedSelectHFONT prevFont(hdc, priv->font);
+    ScopedSelectFont prevFont(hdc, priv->font);
     GetTextMetrics(hdc, &priv->fontMetrics);
     priv->fontDy = priv->fontMetrics.tmHeight;
 }
@@ -455,11 +421,10 @@ bool CreateTabsCtrl(TabsCtrl* ctrl) {
     auto y = r.top;
     auto dx = RectDx(r);
     auto dy = RectDy(r);
-    DWORD dwExStyle = 0;
-    DWORD dwStyle = WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_FOCUSNEVER | TCS_FIXEDWIDTH | TCS_FORCELABELLEFT;
-
-    auto hwnd = CreateWindowExW(dwExStyle, WC_TABCONTROL, L"", dwStyle, x, y, dx, dy, ctrl->parent, nullptr,
-                                GetModuleHandle(nullptr), ctrl);
+    DWORD exStyle = 0;
+    DWORD style = WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_FOCUSNEVER | TCS_FIXEDWIDTH | TCS_FORCELABELLEFT;
+    HINSTANCE h = GetModuleHandleW(nullptr);
+    auto hwnd = CreateWindowExW(exStyle, WC_TABCONTROL, L"", style, x, y, dx, dy, ctrl->parent, nullptr, h, ctrl);
 
     if (hwnd == nullptr) {
         return false;
@@ -485,23 +450,23 @@ void DeleteTabsCtrl(TabsCtrl* ctrl) {
     delete ctrl;
 }
 
-void SetState(TabsCtrl* ctrl, std::shared_ptr<TabsCtrlState> state) {
+void SetState(TabsCtrl* ctrl, TabsCtrlState* state) {
     auto priv = ctrl->priv;
     priv->state = state;
-    priv->tabInfos.clear();
+    priv->tabInfos.Reset();
 
     // measure size of tab's title
     auto& tabInfos = priv->tabInfos;
     for (auto& tab : state->tabs) {
         auto ti = new TabItemInfo();
-        tabInfos.emplace_back(ti);
+        tabInfos.Append(ti);
         ti->titleSize = MakeSize(0, 0);
-        if (!tab->title.empty()) {
+        if (!tab->title.IsEmpty()) {
             ti->title = wstrFromUtf8(tab->title);
-            const WCHAR* s = ti->title.data();
+            const WCHAR* s = ti->title.Get();
             ti->titleSize = TextSizeInHwnd2(priv->hwnd, s, priv->font);
         }
-        if (!tab->toolTip.empty()) {
+        if (!tab->toolTip.IsEmpty()) {
             ti->toolTip = wstrFromUtf8(tab->toolTip);
         }
     }
@@ -517,4 +482,156 @@ SIZE GetIdealSize(TabsCtrl* ctrl) {
 
 void SetPos(TabsCtrl* ctrl, RECT& r) {
     MoveWindow(ctrl->priv->hwnd, &r);
+}
+
+/* ----- */
+
+Kind kindTabs = "tabs";
+
+TabsCtrl2::TabsCtrl2(HWND p) : WindowBase(p) {
+    dwStyle = WS_CHILD | WS_CLIPSIBLINGS | TCS_FOCUSNEVER | TCS_FIXEDWIDTH | TCS_FORCELABELLEFT | WS_VISIBLE;
+    winClass = WC_TABCONTROLW;
+    kind = kindTabs;
+}
+
+TabsCtrl2::~TabsCtrl2() {
+}
+
+static void Handle_WM_NOTIFY(void* user, WndEvent* ev) {
+    CrashIf(ev->msg != WM_NOTIFY);
+    TabsCtrl2* w = (TabsCtrl2*)user;
+    ev->w = w; // TODO: is this needed?
+    CrashIf(GetParent(w->hwnd) != (HWND)ev->hwnd);
+}
+
+bool TabsCtrl2::Create() {
+    if (createToolTipsHwnd) {
+        dwStyle |= TCS_TOOLTIPS;
+    }
+    bool ok = WindowBase::Create();
+    if (!ok) {
+        return false;
+    }
+
+    void* user = this;
+    RegisterHandlerForMessage(hwnd, WM_NOTIFY, Handle_WM_NOTIFY, user);
+
+    return true;
+}
+
+void TabsCtrl2::WndProc(WndEvent* ev) {
+    HWND hwnd = ev->hwnd;
+#if 0
+    UINT msg = ev->msg;
+    WPARAM wp = ev->wp;
+    LPARAM lp = ev->lp;
+    DbgLogMsg("tree:", hwnd, msg, wp, ev->lp);
+#endif
+
+    TabsCtrl2* w = this;
+    CrashIf(w->hwnd != (HWND)hwnd);
+}
+
+Size TabsCtrl2::GetIdealSize() {
+    Size sz{32, 128};
+    return sz;
+}
+
+int TabsCtrl2::GetTabCount() {
+    int n = TabCtrl_GetItemCount(hwnd);
+    return n;
+}
+
+// TODO: remove in favor of std::string_view version
+int TabsCtrl2::InsertTab(int idx, const WCHAR* ws) {
+    CrashIf(idx < 0);
+
+    TCITEMW item{0};
+    item.mask = TCIF_TEXT;
+    item.pszText = (WCHAR*)ws;
+    int insertedIdx = TabCtrl_InsertItem(hwnd, idx, &item);
+    return insertedIdx;
+}
+
+int TabsCtrl2::InsertTab(int idx, std::string_view sv) {
+    CrashIf(idx < 0);
+
+    TCITEMW item{0};
+    item.mask = TCIF_TEXT;
+    AutoFreeWstr s = strconv::Utf8ToWstr(sv);
+    item.pszText = s.Get();
+    int insertedIdx = TabCtrl_InsertItem(hwnd, idx, &item);
+    return insertedIdx;
+}
+
+void TabsCtrl2::RemoveTab(int idx) {
+    CrashIf(idx < 0);
+    CrashIf(idx >= GetTabCount());
+    BOOL ok = TabCtrl_DeleteItem(hwnd, idx);
+    CrashIf(!ok);
+}
+
+void TabsCtrl2::RemoveAllTabs() {
+    TabCtrl_DeleteAllItems(hwnd);
+}
+
+// TODO: remove in favor of std::string_view version
+void TabsCtrl2::SetTabText(int idx, const WCHAR* ws) {
+    CrashIf(idx < 0);
+    CrashIf(idx >= GetTabCount());
+
+    TCITEMW item{0};
+    item.mask = TCIF_TEXT;
+    item.pszText = (WCHAR*)ws;
+    TabCtrl_SetItem(hwnd, idx, &item);
+}
+
+void TabsCtrl2::SetTabText(int idx, std::string_view sv) {
+    CrashIf(idx < 0);
+    CrashIf(idx >= GetTabCount());
+
+    TCITEMW item{0};
+    item.mask = TCIF_TEXT;
+    AutoFreeWstr s = strconv::Utf8ToWstr(sv);
+    item.pszText = s.Get();
+    TabCtrl_SetItem(hwnd, idx, &item);
+}
+
+// result is valid until next call to GetTabText()
+// TODO:
+WCHAR* TabsCtrl2::GetTabText(int idx) {
+    CrashIf(idx < 0);
+    CrashIf(idx >= GetTabCount());
+
+    WCHAR buf[512]{0};
+    TCITEMW item{0};
+    item.mask = TCIF_TEXT;
+    item.pszText = buf;
+    item.cchTextMax = dimof(buf) - 1; // -1 just in case
+    TabCtrl_GetItem(hwnd, idx, &item);
+    lastTabText.Set(buf);
+    return lastTabText.Get();
+}
+
+int TabsCtrl2::GetSelectedTabIndex() {
+    int idx = TabCtrl_GetCurSel(hwnd);
+    return idx;
+}
+
+int TabsCtrl2::SetSelectedTabByIndex(int idx) {
+    int prevSelectedIdx = TabCtrl_SetCurSel(hwnd, idx);
+    return prevSelectedIdx;
+}
+
+void TabsCtrl2::SetItemSize(Size sz) {
+    TabCtrl_SetItemSize(hwnd, sz.dx, sz.dy);
+}
+
+void TabsCtrl2::SetToolTipsHwnd(HWND hwndTooltip) {
+    TabCtrl_SetToolTips(hwnd, hwndTooltip);
+}
+
+HWND TabsCtrl2::GetToolTipsHwnd() {
+    HWND res = TabCtrl_GetToolTips(hwnd);
+    return res;
 }

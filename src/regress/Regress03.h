@@ -8,10 +8,10 @@ https://drive.google.com/file/d/0B2EXZJHDEYllMnkzMUZWWGdueDA/view?usp=sharing
 const size_t MAX_REGRESS_DATA = 6421;
 
 struct RegressSearchInfo {
-    WCHAR *searchPhrase;
+    const WCHAR *searchPhrase;
     int count; // how many times it is found in the test document
     int rectCounts[MAX_REGRESS_DATA]; // how many rects or pages (see next struct members) are needed to locate each hit [count elements]
-    RectI rects[MAX_REGRESS_DATA]; // rectangles covering the hits [sum(rectCounts) elements]
+    Rect rects[MAX_REGRESS_DATA]; // rectangles covering the hits [sum(rectCounts) elements]
     int pages[MAX_REGRESS_DATA]; // pages on which the hist are found [sum(rectCounts) elements
 };
 

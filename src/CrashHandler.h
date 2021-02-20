@@ -1,6 +1,10 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD */
 
-void InstallCrashHandler(const WCHAR* crashDumpPath, const WCHAR* symDir);
+extern WCHAR* gCrashFilePath;
+
+void InstallCrashHandler(const WCHAR* crashDumpPath, const WCHAR* crashFilePath, const WCHAR* symDir);
 void SubmitCrashInfo();
 void UninstallCrashHandler();
+bool CrashHandlerDownloadSymbols();
+bool SetSymbolsDir(const WCHAR* symDir);

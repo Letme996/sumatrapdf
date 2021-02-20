@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "BaseUtil.h"
@@ -239,7 +239,7 @@ void Fmt::serializeInst(int n) {
     }
     switch (tArg) {
         case Type::Char:
-            res.Append(arg.c);
+            res.AppendChar(arg.c);
             break;
         case Type::Int:
             // TODO: using AppendFmt is cheating
@@ -263,8 +263,8 @@ void Fmt::serializeInst(int n) {
             res.Append(arg.s);
             break;
         case Type::WStr:
-            OwnedData sUtf8 = str::conv::ToUtf8(arg.ws);
-            res.AppendAndFree(sUtf8.StealData());
+            auto sUtf8 = strconv::WstrToUtf8(arg.ws);
+            res.AppendAndFree(sUtf8.data());
             break;
     };
 }
@@ -285,4 +285,18 @@ char* Fmt::Get() {
 char* Fmt::GetDup() {
     return str::Dup(Get());
 }
+
+std::string_view Format([[maybe_unused]] const char* s, [[maybe_unused]] Arg& a1) {
+    return {};
+}
+
+std::string_view Format([[maybe_unused]] const char* s, [[maybe_unused]] Arg& a1, [[maybe_unused]] Arg& a2) {
+    return {};
+}
+
+std::string_view Format([[maybe_unused]] const char* s, [[maybe_unused]] Arg& a1, [[maybe_unused]] Arg& a2,
+                        [[maybe_unused]] Arg& a3) {
+    return {};
+}
+
 } // namespace fmt

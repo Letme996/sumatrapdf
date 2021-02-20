@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 /* formatting extensions for Mobi */
@@ -11,8 +11,8 @@ class MobiFormatter : public HtmlFormatter {
     MobiDoc* doc;
 
     void HandleSpacing_Mobi(HtmlToken* t);
-    virtual void HandleTagImg(HtmlToken* t);
-    virtual void HandleHtmlTag(HtmlToken* t);
+    void HandleTagImg(HtmlToken* t) override;
+    void HandleHtmlTag(HtmlToken* t) override;
 
   public:
     MobiFormatter(HtmlFormatterArgs* args, MobiDoc* doc);
@@ -23,11 +23,11 @@ class MobiFormatter : public HtmlFormatter {
 class EpubDoc;
 
 class EpubFormatter : public HtmlFormatter {
-    virtual void HandleTagImg(HtmlToken* t);
-    virtual void HandleTagPagebreak(HtmlToken* t);
-    virtual void HandleTagLink(HtmlToken* t);
-    virtual void HandleHtmlTag(HtmlToken* t);
-    virtual bool IgnoreText();
+    void HandleTagImg(HtmlToken* t) override;
+    void HandleTagPagebreak(HtmlToken* t) override;
+    void HandleTagLink(HtmlToken* t) override;
+    void HandleHtmlTag(HtmlToken* t) override;
+    bool IgnoreText() override;
 
     void HandleTagSvgImage(HtmlToken* t);
 
@@ -36,7 +36,8 @@ class EpubFormatter : public HtmlFormatter {
     size_t hiddenDepth;
 
   public:
-    EpubFormatter(HtmlFormatterArgs* args, EpubDoc* doc) : HtmlFormatter(args), epubDoc(doc), hiddenDepth(0) {}
+    EpubFormatter(HtmlFormatterArgs* args, EpubDoc* doc) : HtmlFormatter(args), epubDoc(doc), hiddenDepth(0) {
+    }
 };
 
 /* formatting extensions for FictionBook */
@@ -47,11 +48,13 @@ class Fb2Formatter : public HtmlFormatter {
     int section;
     int titleCount;
 
-    virtual void HandleTagImg(HtmlToken* t);
+    void HandleTagImg(HtmlToken* t) override;
     void HandleTagAsHtml(HtmlToken* t, const char* name);
-    virtual void HandleHtmlTag(HtmlToken* t);
+    void HandleHtmlTag(HtmlToken* t) override;
 
-    virtual bool IgnoreText() { return false; }
+    bool IgnoreText() override {
+        return false;
+    }
 
     Fb2Doc* fb2Doc;
 
@@ -65,24 +68,25 @@ class HtmlDoc;
 
 class HtmlFileFormatter : public HtmlFormatter {
   protected:
-    virtual void HandleTagImg(HtmlToken* t);
-    virtual void HandleTagLink(HtmlToken* t);
+    void HandleTagImg(HtmlToken* t) override;
+    void HandleTagLink(HtmlToken* t) override;
 
     HtmlDoc* htmlDoc;
 
   public:
-    HtmlFileFormatter(HtmlFormatterArgs* args, HtmlDoc* doc) : HtmlFormatter(args), htmlDoc(doc) {}
+    HtmlFileFormatter(HtmlFormatterArgs* args, HtmlDoc* doc) : HtmlFormatter(args), htmlDoc(doc) {
+    }
 };
 
 /* formatting extensions for TXT */
 
 class TxtFormatter : public HtmlFormatter {
   protected:
-    virtual void HandleTagPagebreak(HtmlToken* t) {
-        UNUSED(t);
+    void HandleTagPagebreak([[maybe_unused]] HtmlToken* t) override {
         ForceNewPage();
     }
 
   public:
-    explicit TxtFormatter(HtmlFormatterArgs* args) : HtmlFormatter(args) {}
+    explicit TxtFormatter(HtmlFormatterArgs* args) : HtmlFormatter(args) {
+    }
 };

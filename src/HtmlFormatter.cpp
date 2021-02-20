@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
@@ -6,13 +6,13 @@
 #include "utils/HtmlParserLookup.h"
 #include "utils/CssParser.h"
 #include "utils/HtmlPullParser.h"
+#include "utils/Log.h"
 #include "mui/Mui.h"
 #include "utils/Timer.h"
+
 // rendering engines
 #include "EbookBase.h"
 #include "HtmlFormatter.h"
-#define NOLOG 1
-#include "utils/DebugLog.h"
 
 /*
 Given size of a page, we format html into a set of pages. We handle only a small
@@ -63,8 +63,9 @@ other base element(s) with less functionality and less overhead).
 */
 
 bool ValidReparseIdx(ptrdiff_t idx, HtmlPullParser* parser) {
-    if ((idx < 0) || (idx > (int)parser->Len()))
+    if ((idx < 0) || (idx > (int)parser->Len())) {
         return false;
+    }
     return true;
 }
 
@@ -83,7 +84,7 @@ DrawInstr DrawInstr::SetFont(mui::CachedFont* font) {
 
 DrawInstr DrawInstr::FixedSpace(float dx) {
     DrawInstr di(DrawInstrType::FixedSpace);
-    di.bbox.Width = dx;
+    di.bbox.dx = dx;
     return di;
 }
 
@@ -109,8 +110,6 @@ DrawInstr DrawInstr::Anchor(const char* s, size_t len, RectF bbox) {
     di.bbox = bbox;
     return di;
 }
-
-StyleRule::StyleRule() : tag(Tag_NotFound), textIndentUnit(inherit), textAlign(Align_NotFound) {}
 
 // parses size in the form "1em", "3pt" or "15px"
 static void ParseSizeWithUnit(const char* s, size_t len, float* size, StyleRule::Unit* unit) {
@@ -151,8 +150,9 @@ StyleRule StyleRule::Parse(const char* s, size_t len) {
 }
 
 void StyleRule::Merge(StyleRule& source) {
-    if (source.textAlign != Align_NotFound)
+    if (source.textAlign != Align_NotFound) {
         textAlign = source.textAlign;
+    }
     if (source.textIndentUnit != StyleRule::inherit) {
         textIndent = source.textIndent;
         textIndentUnit = source.textIndentUnit;
@@ -160,23 +160,9 @@ void StyleRule::Merge(StyleRule& source) {
 }
 
 HtmlFormatter::HtmlFormatter(HtmlFormatterArgs* args)
-    : pageDx(args->pageDx),
-      pageDy(args->pageDy),
-      textAllocator(args->textAllocator),
-      currLineReparseIdx(0),
-      currX(0),
-      currY(0),
-      currLineTopPadding(0),
-      currLinkIdx(0),
-      listDepth(0),
-      preFormatted(false),
-      dirRtl(false),
-      currPage(nullptr),
-      finishedParsing(false),
-      pageCount(0),
-      keepTagNesting(false) {
+    : pageDx(args->pageDx), pageDy(args->pageDy), textAllocator(args->textAllocator) {
     currReparseIdx = args->reparseIdx;
-    htmlParser = new HtmlPullParser(args->htmlStr.data(), args->htmlStr.size());
+    htmlParser = new HtmlPullParser((const char*)args->htmlStr.data(), args->htmlStr.size());
     htmlParser->SetCurrPosOff(currReparseIdx);
     CrashIf(!ValidReparseIdx(currReparseIdx, htmlParser));
 
@@ -197,8 +183,9 @@ HtmlFormatter::HtmlFormatter(HtmlFormatterArgs* args)
     lineSpacing = textMeasure->GetCurrFontLineSpacing();
     spaceDx = CurrFont()->GetSize() / 2.5f; // note: a heuristic
     float spaceDx2 = GetSpaceDx(textMeasure);
-    if (spaceDx2 < spaceDx)
+    if (spaceDx2 < spaceDx) {
         spaceDx = spaceDx2;
+    }
 
     EmitNewPage();
 }
@@ -236,8 +223,9 @@ void HtmlFormatter::SetFont(const WCHAR* fontName, FontStyle fs, float fontSize)
 
 void HtmlFormatter::SetFontBasedOn(mui::CachedFont* font, FontStyle fs, float fontSize) {
     const WCHAR* fontName = font->GetName();
-    if (nullptr == fontName)
+    if (nullptr == fontName) {
         fontName = defaultFontName;
+    }
     SetFont(fontName, fs, fontSize);
 }
 
@@ -254,10 +242,11 @@ bool ValidStyleForChangeFontStyle(FontStyle fs) {
 // like "<b>fo<i>oo</b>bar</i>" - "bar" should be italic but will be bold
 void HtmlFormatter::ChangeFontStyle(FontStyle fs, bool addStyle) {
     CrashIf(!ValidStyleForChangeFontStyle(fs));
-    if (addStyle)
+    if (addStyle) {
         SetFontBasedOn(CurrFont(), (FontStyle)(fs | CurrFont()->GetStyle()));
-    else
+    } else {
         RevertStyleChange();
+    }
 }
 
 void HtmlFormatter::SetAlignment(AlignAttr align) {
@@ -269,8 +258,9 @@ void HtmlFormatter::SetAlignment(AlignAttr align) {
 void HtmlFormatter::RevertStyleChange() {
     if (styleStack.size() > 1) {
         DrawStyle style = styleStack.Pop();
-        if (style.font != CurrFont())
+        if (style.font != CurrFont()) {
             AppendInstr(DrawInstr::SetFont(CurrFont()));
+        }
         dirRtl = style.dirRtl;
     }
 }
@@ -288,17 +278,17 @@ static bool IsVisibleDrawInstr(DrawInstr& i) {
 
 // sum of widths of all elements with a fixed size and flexible
 // spaces (using minimum value for its width)
-REAL HtmlFormatter::CurrLineDx() {
-    REAL dx = NewLineX();
+float HtmlFormatter::CurrLineDx() {
+    float dx = NewLineX();
     for (DrawInstr& i : currLineInstr) {
         if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type) {
-            dx += i.bbox.Width;
+            dx += i.bbox.dx;
         } else if (DrawInstrType::Image == i.type) {
-            dx += i.bbox.Width;
+            dx += i.bbox.dx;
         } else if (DrawInstrType::ElasticSpace == i.type) {
             dx += spaceDx;
         } else if (DrawInstrType::FixedSpace == i.type) {
-            dx += i.bbox.Width;
+            dx += i.bbox.dx;
         }
     }
     return dx;
@@ -309,8 +299,9 @@ float HtmlFormatter::CurrLineDy() {
     float dy = lineSpacing;
     for (DrawInstr& i : currLineInstr) {
         if (IsVisibleDrawInstr(i)) {
-            if (i.bbox.Height > dy)
-                dy = i.bbox.Height;
+            if (i.bbox.dy > dy) {
+                dy = i.bbox.dy;
+            }
         }
     }
     return dy;
@@ -321,36 +312,39 @@ float HtmlFormatter::CurrLineDy() {
 float HtmlFormatter::NewLineX() {
     // TODO: indent based on font size instead?
     float x = 15.f * listDepth;
-    if (x < pageDx - 20.f)
+    if (x < pageDx - 20.f) {
         return x;
-    if (pageDx < 20.f)
+    }
+    if (pageDx < 20.f) {
         return 0.f;
+    }
     return pageDx - 20.f;
 }
 
 // When this is called, Width and Height of each element is already set
 // We set position x of each visible element
-void HtmlFormatter::LayoutLeftStartingAt(REAL offX) {
+void HtmlFormatter::LayoutLeftStartingAt(float offX) {
     DrawInstr* lastInstr = nullptr;
     int instrCount = 0;
 
-    REAL x = offX + NewLineX();
+    float x = offX + NewLineX();
     for (DrawInstr& i : currLineInstr) {
         if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type || DrawInstrType::Image == i.type) {
-            i.bbox.X = x;
-            x += i.bbox.Width;
+            i.bbox.x = x;
+            x += i.bbox.dx;
             lastInstr = &i;
             instrCount++;
         } else if (DrawInstrType::ElasticSpace == i.type) {
             x += spaceDx;
         } else if (DrawInstrType::FixedSpace == i.type) {
-            x += i.bbox.Width;
+            x += i.bbox.dx;
         }
     }
 
     // center a single image
-    if (instrCount == 1 && DrawInstrType::Image == lastInstr->type)
-        lastInstr->bbox.X = (pageDx - lastInstr->bbox.Width) / 2.f;
+    if (instrCount == 1 && DrawInstrType::Image == lastInstr->type) {
+        lastInstr->bbox.x = (pageDx - lastInstr->bbox.dx) / 2.f;
+    }
 }
 
 // TODO: if elements are of different sizes (e.g. texts using different fonts)
@@ -358,8 +352,9 @@ void HtmlFormatter::LayoutLeftStartingAt(REAL offX) {
 // record for each element)
 static void SetYPos(Vec<DrawInstr>& instr, float y) {
     for (DrawInstr& i : instr) {
-        if (IsVisibleDrawInstr(i))
-            i.bbox.Y = y;
+        if (IsVisibleDrawInstr(i)) {
+            i.bbox.y = y;
+        }
     }
 }
 
@@ -370,7 +365,7 @@ void HtmlFormatter::DumpLineDebugInfo() {
 
 // Redistribute extra space in the line equally among the spaces
 void HtmlFormatter::JustifyLineBoth() {
-    REAL extraSpaceDxTotal = pageDx - currX;
+    float extraSpaceDxTotal = pageDx - currX;
 #ifdef DEBUG
     if (extraSpaceDxTotal < 0.f)
         DumpLineDebugInfo();
@@ -384,40 +379,45 @@ void HtmlFormatter::JustifyLineBoth() {
         if (DrawInstrType::ElasticSpace == i.type) {
             ++spaces;
             endsWithSpace = true;
-        } else if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type)
+        } else if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type) {
             endsWithSpace = false;
-        else if (DrawInstrType::Image == i.type)
+        } else if (DrawInstrType::Image == i.type) {
             endsWithSpace = false;
+        }
     }
     // don't take a space at the end of the line into account
     // (the last word is explicitly right-aligned below)
-    if (endsWithSpace)
+    if (endsWithSpace) {
         spaces--;
-    if (0 == spaces)
+    }
+    if (0 == spaces) {
         return;
+    }
     // redistribute extra dx space among elastic spaces
-    REAL extraSpaceDx = extraSpaceDxTotal / (float)spaces;
+    float extraSpaceDx = extraSpaceDxTotal / (float)spaces;
     float offX = 0.f;
     DrawInstr* lastStr = nullptr;
     for (DrawInstr& i : currLineInstr) {
-        if (DrawInstrType::ElasticSpace == i.type)
+        if (DrawInstrType::ElasticSpace == i.type) {
             offX += extraSpaceDx;
-        else if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type ||
-                 DrawInstrType::Image == i.type) {
-            i.bbox.X += offX;
+        } else if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type ||
+                   DrawInstrType::Image == i.type) {
+            i.bbox.x += offX;
             lastStr = &i;
         }
     }
     // align the last element perfectly against the right edge in case
     // we've accumulated rounding errors
-    if (lastStr)
-        lastStr->bbox.X = pageDx - lastStr->bbox.Width;
+    if (lastStr) {
+        lastStr->bbox.x = pageDx - lastStr->bbox.dx;
+    }
 }
 
 bool HtmlFormatter::IsCurrLineEmpty() {
     for (DrawInstr& i : currLineInstr) {
-        if (IsVisibleDrawInstr(i))
+        if (IsVisibleDrawInstr(i)) {
             return false;
+        }
     }
     return true;
 }
@@ -448,26 +448,28 @@ void HtmlFormatter::JustifyCurrLine(AlignAttr align) {
     // so that the first element on a line is the right-most, etc.
     if (dirRtl) {
         for (DrawInstr& i : currLineInstr) {
-            if (IsVisibleDrawInstr(i))
-                i.bbox.X = pageDx - i.bbox.X - i.bbox.Width;
+            if (IsVisibleDrawInstr(i)) {
+                i.bbox.x = pageDx - i.bbox.x - i.bbox.dx;
+            }
         }
     }
 }
 
 static RectF RectFUnion(RectF& r1, RectF& r2) {
-    if (r2.IsEmptyArea())
+    if (r2.IsEmpty()) {
         return r1;
-    if (r1.IsEmptyArea())
+    }
+    if (r1.IsEmpty()) {
         return r2;
-    RectF ru;
-    ru.Union(ru, r1, r2);
-    return ru;
+    }
+    return r1.Union(r2);
 }
 
 void HtmlFormatter::UpdateLinkBboxes(HtmlPage* page) {
     for (DrawInstr& i : page->instructions) {
-        if (DrawInstrType::LinkStart != i.type)
+        if (DrawInstrType::LinkStart != i.type) {
             continue;
+        }
         for (DrawInstr* i2 = &i + 1; i2->type != DrawInstrType::LinkEnd; i2++) {
             if (IsVisibleDrawInstr(*i2)) {
                 i.bbox = RectFUnion(i.bbox, i2->bbox);
@@ -478,8 +480,9 @@ void HtmlFormatter::UpdateLinkBboxes(HtmlPage* page) {
 
 void HtmlFormatter::ForceNewPage() {
     bool createdNewPage = FlushCurrLine(true);
-    if (createdNewPage)
+    if (createdNewPage) {
         return;
+    }
     UpdateLinkBboxes(currPage);
     pagesToSend.Append(currPage);
 
@@ -496,14 +499,16 @@ bool HtmlFormatter::FlushCurrLine(bool isParagraphBreak) {
         // remove all spaces (only keep SetFont, LinkStart and Anchor instructions)
         for (size_t k = currLineInstr.size(); k > 0; k--) {
             DrawInstr& i = currLineInstr.at(k - 1);
-            if (DrawInstrType::FixedSpace == i.type || DrawInstrType::ElasticSpace == i.type)
+            if (DrawInstrType::FixedSpace == i.type || DrawInstrType::ElasticSpace == i.type) {
                 currLineInstr.RemoveAt(k - 1);
+            }
         }
         return false;
     }
     AlignAttr align = CurrStyle()->align;
-    if (isParagraphBreak && (Align_Justify == align))
+    if (isParagraphBreak && (Align_Justify == align)) {
         align = Align_Left;
+    }
     JustifyCurrLine(align);
 
     // create a new page if necessary
@@ -559,8 +564,9 @@ void HtmlFormatter::EmitEmptyLine(float lineDy) {
         // remove all spaces (only keep SetFont, LinkStart and Anchor instructions)
         for (size_t k = currLineInstr.size(); k > 0; k--) {
             DrawInstr& i = currLineInstr.at(k - 1);
-            if (DrawInstrType::FixedSpace == i.type || DrawInstrType::ElasticSpace == i.type)
+            if (DrawInstrType::FixedSpace == i.type || DrawInstrType::ElasticSpace == i.type) {
                 currLineInstr.RemoveAt(k - 1);
+            }
         }
         return;
     }
@@ -568,41 +574,46 @@ void HtmlFormatter::EmitEmptyLine(float lineDy) {
 }
 
 static bool HasPreviousLineSingleImage(Vec<DrawInstr>& instrs) {
-    REAL imageY = -1;
+    float imageY = -1;
     for (size_t idx = instrs.size(); idx > 0; idx--) {
         DrawInstr& i = instrs.at(idx - 1);
-        if (!IsVisibleDrawInstr(i))
+        if (!IsVisibleDrawInstr(i)) {
             continue;
+        }
         if (-1 != imageY) {
             // if another visible item precedes the image,
             // it must be completely above it (previous line)
-            return i.bbox.Y + i.bbox.Height <= imageY;
+            return i.bbox.y + i.bbox.dy <= imageY;
         }
-        if (DrawInstrType::Image != i.type)
+        if (DrawInstrType::Image != i.type) {
             return false;
-        imageY = i.bbox.Y;
+        }
+        imageY = i.bbox.y;
     }
     return imageY != -1;
 }
 
 bool HtmlFormatter::EmitImage(ImageData* img) {
     CrashIf(!img->data);
-    Size imgSize = BitmapSizeFromData(img->data, img->len);
-    if (imgSize.Empty())
+    Size imgSize = BitmapSizeFromData(img->AsSpan());
+    if (imgSize.IsEmpty()) {
         return false;
+    }
 
-    SizeF newSize((REAL)imgSize.Width, (REAL)imgSize.Height);
+    SizeF newSize((float)imgSize.dx, (float)imgSize.dy);
     // move overly large images to a new line (if they don't fit entirely)
-    if (!IsCurrLineEmpty() && (currX + newSize.Width > pageDx || currY + newSize.Height > pageDy))
+    if (!IsCurrLineEmpty() && (currX + newSize.dx > pageDx || currY + newSize.dy > pageDy)) {
         FlushCurrLine(false);
+    }
     // move overly large images to a new page
     // (if they don't fit even when scaled down to 75%)
-    REAL scalePage = std::min((pageDx - currX) / newSize.Width, pageDy / newSize.Height);
-    if (currY > 0 && currY + newSize.Height * std::min(scalePage, 0.75f) > pageDy)
+    float scalePage = std::min((pageDx - currX) / newSize.dx, pageDy / newSize.dy);
+    if (currY > 0 && currY + newSize.dy * std::min(scalePage, 0.75f) > pageDy) {
         ForceNewPage();
+    }
     // if image is bigger than the available space, scale it down
-    if (newSize.Width > pageDx - currX || newSize.Height > pageDy - currY) {
-        REAL scale = std::min(scalePage, (pageDy - currY) / newSize.Height);
+    if (newSize.dx > pageDx - currX || newSize.dy > pageDy - currY) {
+        float scale = std::min(scalePage, (pageDy - currY) / newSize.dy);
         // scale down images that follow right after a line
         // containing a single image as little as possible,
         // as they might be intended to be of the same size
@@ -611,14 +622,14 @@ bool HtmlFormatter::EmitImage(ImageData* img) {
             scale = scalePage;
         }
         if (scale < 1) {
-            newSize.Width = std::min(newSize.Width * scale, pageDx - currX);
-            newSize.Height = std::min(newSize.Height * scale, pageDy - currY);
+            newSize.dx = std::min(newSize.dx * scale, pageDx - currX);
+            newSize.dy = std::min(newSize.dy * scale, pageDy - currY);
         }
     }
 
     RectF bbox(PointF(currX, 0), newSize);
     AppendInstr(DrawInstr::Image(img->data, img->len, bbox));
-    currX += bbox.Width;
+    currX += bbox.dx;
 
     return true;
 }
@@ -647,8 +658,9 @@ void HtmlFormatter::EmitParagraph(float indent) {
 // if there isn't, we start a new line
 // returns false if dx is bigger than pageDx
 bool HtmlFormatter::EnsureDx(float dx) {
-    if (currX + dx <= pageDx)
+    if (currX + dx <= pageDx) {
         return true;
+    }
     FlushCurrLine(false);
     return dx <= pageDx;
 }
@@ -656,22 +668,26 @@ bool HtmlFormatter::EnsureDx(float dx) {
 // don't emit multiple spaces and don't emit spaces
 // at the beginning of the line
 static bool CanEmitElasticSpace(float currX, float NewLineX, float maxCurrX, Vec<DrawInstr>& currLineInstr) {
-    if (NewLineX == currX || 0 == currLineInstr.size())
+    if (NewLineX == currX || 0 == currLineInstr.size()) {
         return false;
+    }
     // prevent elastic spaces from being flushed to the
     // beginning of the next line
-    if (currX > maxCurrX)
+    if (currX > maxCurrX) {
         return false;
+    }
     DrawInstr& di = currLineInstr.Last();
     // don't add a space if only an anchor would be in between them
-    if (DrawInstrType::Anchor == di.type && currLineInstr.size() > 1)
+    if (DrawInstrType::Anchor == di.type && currLineInstr.size() > 1) {
         di = currLineInstr.at(currLineInstr.size() - 2);
+    }
     return (DrawInstrType::ElasticSpace != di.type) && (DrawInstrType::FixedSpace != di.type);
 }
 
 void HtmlFormatter::EmitElasticSpace() {
-    if (!CanEmitElasticSpace(currX, NewLineX(), pageDx - spaceDx, currLineInstr))
+    if (!CanEmitElasticSpace(currX, NewLineX(), pageDx - spaceDx, currLineInstr)) {
         return;
+    }
     EnsureDx(spaceDx);
     currX += spaceDx;
     AppendInstr(DrawInstr(DrawInstrType::ElasticSpace));
@@ -704,19 +720,21 @@ void HtmlFormatter::EmitTextRun(const char* s, const char* end) {
 
     while (s < end) {
         // don't update the reparseIdx if s doesn't point into the original source
-        if (!resolved)
+        if (!resolved) {
             currReparseIdx = s - htmlParser->Start();
+        }
 
-        size_t strLen = str::Utf8ToWcharBuf(s, end - s, buf, dimof(buf));
+        size_t strLen = strconv::Utf8ToWcharBuf(s, end - s, buf, dimof(buf));
         // soft hyphens should not be displayed
         strLen -= str::RemoveChars(buf, L"\xad");
-        if (0 == strLen)
+        if (0 == strLen) {
             break;
+        }
         textMeasure->SetFont(CurrFont());
         RectF bbox = textMeasure->Measure(buf, strLen);
-        if (bbox.Width <= pageDx - currX) {
+        if (bbox.dx <= pageDx - currX) {
             AppendInstr(DrawInstr::Str(s, end - s, bbox, dirRtl));
-            currX += bbox.Width;
+            currX += bbox.dx;
             break;
         }
         // get len That Fits the remaining space in the line
@@ -724,13 +742,13 @@ void HtmlFormatter::EmitTextRun(const char* s, const char* end) {
         // try to prevent a break in the middle of a word
         if (lenThatFits > 0) {
             if (!CanBreakWordOnChar(buf[lenThatFits])) {
-                size_t lentmp = lenThatFits;
-                for (lentmp = lenThatFits; lentmp > 0; lentmp--) {
-                    if (CanBreakWordOnChar(buf[lentmp - 1])) {
+                size_t lenTmp;
+                for (lenTmp = lenThatFits; lenTmp > 0; lenTmp--) {
+                    if (CanBreakWordOnChar(buf[lenTmp - 1])) {
                         break;
                     }
                 }
-                if (lentmp == 0) {
+                if (lenTmp == 0) {
                     // make a new line if the word need to show in another line
                     if (currX != NewLineX()) {
                         FlushCurrLine(false);
@@ -739,7 +757,7 @@ void HtmlFormatter::EmitTextRun(const char* s, const char* end) {
                     // split the word (or CJK sentence) if it is too long to show in one line
                 } else {
                     // renew lenThatFits
-                    lenThatFits = lentmp;
+                    lenThatFits = lenTmp;
                 }
             }
         } else {
@@ -749,8 +767,8 @@ void HtmlFormatter::EmitTextRun(const char* s, const char* end) {
         }
 
         textMeasure->SetFont(CurrFont());
-        bbox = textMeasure->Measure(buf, lenThatFits);
-        CrashIf(bbox.Width > pageDx);
+        bbox = ToGdipRectF(textMeasure->Measure(buf, lenThatFits));
+        CrashIf(bbox.dx > pageDx);
         // s is UTF-8 and buf is UTF-16, so one
         // WCHAR doesn't always equal one char
         // TODO: this usually fails for non-BMP characters (i.e. hardly ever)
@@ -758,20 +776,23 @@ void HtmlFormatter::EmitTextRun(const char* s, const char* end) {
             lenThatFits += buf[i - 1] < 0x80 ? 0 : buf[i - 1] < 0x800 ? 1 : 2;
         }
         AppendInstr(DrawInstr::Str(s, lenThatFits, bbox, dirRtl));
-        currX += bbox.Width;
+        currX += bbox.dx;
         s += lenThatFits;
     }
 }
 
 void HtmlFormatter::HandleAnchorAttr(HtmlToken* t, bool idsOnly) {
-    if (t->IsEndTag())
+    if (t->IsEndTag()) {
         return;
+    }
 
     AttrInfo* attr = t->GetAttrByName("id");
-    if (!attr && !idsOnly && Tag_A == t->tag)
+    if (!attr && !idsOnly && Tag_A == t->tag) {
         attr = t->GetAttrByName("name");
-    if (!attr)
+    }
+    if (!attr) {
         return;
+    }
 
     // TODO: make anchors more specific than the top of the current line?
     RectF bbox(0, currY, pageDx, 0);
@@ -784,26 +805,30 @@ void HtmlFormatter::HandleDirAttr(HtmlToken* t) {
     // only apply reading direction changes to block elements (for now)
     if (t->IsStartTag() && !IsInlineTag(t->tag)) {
         AttrInfo* attr = t->GetAttrByName("dir");
-        if (attr)
+        if (attr) {
             dirRtl = CurrStyle()->dirRtl = attr->ValIs("RTL");
+        }
     }
 }
 
 void HtmlFormatter::HandleTagBr() {
     // make sure to always emit a line
-    if (IsCurrLineEmpty())
+    if (IsCurrLineEmpty()) {
         EmitEmptyLine(lineSpacing);
-    else
+    } else {
         FlushCurrLine(true);
+    }
 }
 
 static AlignAttr GetAlignAttr(HtmlToken* t, AlignAttr defVal) {
     AttrInfo* attr = t->GetAttrByName("align");
-    if (!attr)
+    if (!attr) {
         return defVal;
+    }
     AlignAttr align = FindAlignAttr(attr->val, attr->valLen);
-    if (Align_NotFound == align)
+    if (Align_NotFound == align) {
         return defVal;
+    }
     return align;
 }
 
@@ -813,16 +838,23 @@ void HtmlFormatter::HandleTagP(HtmlToken* t, bool isDiv) {
         float indent = 0;
 
         StyleRule rule = ComputeStyleRule(t);
-        if (rule.textAlign != Align_NotFound)
+        if (rule.textAlign != Align_NotFound) {
             align = rule.textAlign;
-        else if (!isDiv) {
+        } else if (!isDiv) {
             // prefer CSS styling to align attribute
             align = GetAlignAttr(t, align);
         }
         if (rule.textIndentUnit != StyleRule::inherit && rule.textIndent > 0) {
-            float factor = rule.textIndentUnit == StyleRule::em
-                               ? CurrFont()->GetSize()
-                               : rule.textIndentUnit == StyleRule::pt ? 1 /* TODO: take DPI into account */ : 1;
+            float factor = CurrFont()->GetSize();
+            if (rule.textIndentUnit != StyleRule::em) {
+                factor = 1;
+#if 0
+                if (rule.textIndentUnit == StyleRule::pt) {
+                    /* TODO: take DPI into account */
+                    factor = 1;
+                }
+#endif
+            }
             indent = rule.textIndent * factor;
         }
 
@@ -844,7 +876,7 @@ void HtmlFormatter::HandleTagFont(HtmlToken* t) {
     AttrInfo* attr = t->GetAttrByName("face");
     const WCHAR* faceName = CurrFont()->GetName();
     if (attr) {
-        size_t strLen = str::Utf8ToWcharBuf(attr->val, attr->valLen, buf, dimof(buf));
+        size_t strLen = strconv::Utf8ToWcharBuf(attr->val, attr->valLen, buf, dimof(buf));
         // multiple font names can be comma separated
         if (strLen > 0 && *buf != ',') {
             str::TransChars(buf, L",", L"\0");
@@ -859,10 +891,11 @@ void HtmlFormatter::HandleTagFont(HtmlToken* t) {
         int size = 3; // normal size
         str::Parse(attr->val, attr->valLen, "%d", &size);
         // sizes can also be relative to the current size
-        if (attr->valLen > 0 && ('-' == *attr->val || '+' == *attr->val))
+        if (attr->valLen > 0 && ('-' == *attr->val || '+' == *attr->val)) {
             size += 3;
+        }
         size = limitValue(size, 1, 7);
-        float scale = pow(1.2f, size - 3);
+        float scale = (float)pow(1.2f, size - 3);
         fontSize = defaultFontSize * scale;
     }
 
@@ -905,24 +938,27 @@ void HtmlFormatter::HandleTagHx(HtmlToken* t) {
         RevertStyleChange();
     } else {
         EmitParagraph(0);
-        float fontSize = defaultFontSize * pow(1.1f, '5' - t->s[1]);
-        if (currY > 0)
+        float fontSize = defaultFontSize * (float)pow(1.1f, '5' - t->s[1]);
+        if (currY > 0) {
             currY += fontSize / 2;
+        }
         SetFontBasedOn(CurrFont(), FontStyleBold, fontSize);
 
         StyleRule rule = ComputeStyleRule(t);
-        if (Align_NotFound == rule.textAlign)
+        if (Align_NotFound == rule.textAlign) {
             rule.textAlign = GetAlignAttr(t, Align_Left);
+        }
         CurrStyle()->align = rule.textAlign;
     }
 }
 
 void HtmlFormatter::HandleTagList(HtmlToken* t) {
     FlushCurrLine(true);
-    if (t->IsStartTag())
+    if (t->IsStartTag()) {
         listDepth++;
-    else if (t->IsEndTag() && listDepth > 0)
+    } else if (t->IsEndTag() && listDepth > 0) {
         listDepth--;
+    }
     currX = NewLineX();
 }
 
@@ -939,11 +975,12 @@ void HtmlFormatter::HandleTagPre(HtmlToken* t) {
 }
 
 StyleRule* HtmlFormatter::FindStyleRule(HtmlTag tag, const char* clazz, size_t clazzLen) {
-    uint32_t classHash = clazz ? MurmurHash2(clazz, clazzLen) : 0;
+    u32 classHash = clazz ? MurmurHash2(clazz, clazzLen) : 0;
     for (size_t i = 0; i < styleRules.size(); i++) {
         StyleRule& rule = styleRules.at(i);
-        if (tag == rule.tag && classHash == rule.classHash)
+        if (tag == rule.tag && classHash == rule.classHash) {
             return &rule;
+        }
     }
     return nullptr;
 }
@@ -952,23 +989,28 @@ StyleRule HtmlFormatter::ComputeStyleRule(HtmlToken* t) {
     StyleRule rule;
     // get style rules ordered by specificity
     StyleRule* prevRule = FindStyleRule(Tag_Body, nullptr, 0);
-    if (prevRule)
+    if (prevRule) {
         rule.Merge(*prevRule);
+    }
     prevRule = FindStyleRule(Tag_Any, nullptr, 0);
-    if (prevRule)
+    if (prevRule) {
         rule.Merge(*prevRule);
+    }
     prevRule = FindStyleRule(t->tag, nullptr, 0);
-    if (prevRule)
+    if (prevRule) {
         rule.Merge(*prevRule);
+    }
     // TODO: support multiple class names
     AttrInfo* attr = t->GetAttrByName("class");
     if (attr) {
         prevRule = FindStyleRule(Tag_Any, attr->val, attr->valLen);
-        if (prevRule)
+        if (prevRule) {
             rule.Merge(*prevRule);
+        }
         prevRule = FindStyleRule(t->tag, attr->val, attr->valLen);
-        if (prevRule)
+        if (prevRule) {
             rule.Merge(*prevRule);
+        }
     }
     attr = t->GetAttrByName("style");
     if (attr) {
@@ -984,8 +1026,9 @@ void HtmlFormatter::ParseStyleSheet(const char* data, size_t len) {
         StyleRule rule = StyleRule::Parse(&parser);
         const CssSelector* sel;
         while ((sel = parser.NextSelector()) != nullptr) {
-            if (Tag_NotFound == sel->tag)
+            if (Tag_NotFound == sel->tag) {
                 continue;
+            }
             StyleRule* prevRule = FindStyleRule(sel->tag, sel->clazz, sel->clazzLen);
             if (prevRule) {
                 prevRule->Merge(rule);
@@ -999,18 +1042,21 @@ void HtmlFormatter::ParseStyleSheet(const char* data, size_t len) {
 }
 
 void HtmlFormatter::HandleTagStyle(HtmlToken* t) {
-    if (!t->IsStartTag())
+    if (!t->IsStartTag()) {
         return;
+    }
     AttrInfo* attr = t->GetAttrByName("type");
-    if (attr && !attr->ValIs("text/css"))
+    if (attr && !attr->ValIs("text/css")) {
         return;
+    }
 
     const char* start = t->s + t->sLen + 1;
     while (t && !t->IsError() && (!t->IsEndTag() || t->tag != Tag_Style)) {
         t = htmlParser->Next();
     }
-    if (!t || !t->IsEndTag() || Tag_Style != t->tag)
+    if (!t || !t->IsEndTag() || Tag_Style != t->tag) {
         return;
+    }
     const char* end = t->s - 2;
     CrashIf(start > end);
     ParseStyleSheet(start, end - start);
@@ -1021,12 +1067,14 @@ void HtmlFormatter::HandleTagStyle(HtmlToken* t) {
 static bool AutoCloseOnOpen(HtmlTag curr, HtmlTag prev) {
     CrashIf(IsInlineTag(curr));
     // always start afresh for a new <body>
-    if (Tag_Body == curr)
+    if (Tag_Body == curr) {
         return true;
+    }
     // allow <div>s to be contained within inline tags
     // (e.g. <i><div>...</div></i> from pg12.mobi)
-    if (Tag_Div == curr)
+    if (Tag_Div == curr) {
         return false;
+    }
 
     switch (prev) {
         case Tag_Dd:
@@ -1075,26 +1123,30 @@ void HtmlFormatter::UpdateTagNesting(HtmlToken* t) {
     bool isInline = IsInlineTag(t->tag);
     if (t->IsStartTag()) {
         if (IsInlineTag(t->tag)) {
-            tagNesting.Push(t->tag);
+            tagNesting.Append(t->tag);
             return;
         }
         // close all tags that can't contain this new block-level tag
-        for (; idx > 0 && AutoCloseOnOpen(t->tag, tagNesting.at(idx - 1)); idx--)
-            ;
+        for (; idx > 0 && AutoCloseOnOpen(t->tag, tagNesting.at(idx - 1)); idx--) {
+            // no-op
+        }
     } else {
         // close all tags that were contained within the current tag
         // (for inline tags just up to the next block-level tag)
-        for (; idx > 0 && (!isInline || IsInlineTag(tagNesting.at(idx - 1))) && t->tag != tagNesting.at(idx - 1); idx--)
-            ;
-        if (0 == idx || tagNesting.at(idx - 1) != t->tag)
+        for (; idx > 0 && (!isInline || IsInlineTag(tagNesting.at(idx - 1))) && t->tag != tagNesting.at(idx - 1);
+             idx--) {
+            // no-op
+        }
+        if (0 == idx || tagNesting.at(idx - 1) != t->tag) {
             return;
+        }
     }
 
     AutoCloseTags(tagNesting.size() - idx);
 
-    if (t->IsStartTag())
-        tagNesting.Push(t->tag);
-    else {
+    if (t->IsStartTag()) {
+        tagNesting.Append(t->tag);
+    } else {
         CrashIf(!t->IsEndTag() || t->tag != tagNesting.Last());
         tagNesting.Pop();
     }
@@ -1115,8 +1167,9 @@ void HtmlFormatter::HandleHtmlTag(HtmlToken* t) {
     } else if ((Tag_I == tag) || (Tag_Em == tag)) {
         ChangeFontStyle(FontStyleItalic, t->IsStartTag());
     } else if (Tag_U == tag) {
-        if (!currLinkIdx)
+        if (!currLinkIdx) {
             ChangeFontStyle(FontStyleUnderline, t->IsStartTag());
+        }
     } else if (Tag_Strike == tag) {
         ChangeFontStyle(FontStyleStrikeout, t->IsStartTag());
     } else if (Tag_Br == tag) {
@@ -1141,8 +1194,9 @@ void HtmlFormatter::HandleHtmlTag(HtmlToken* t) {
         // TODO: implement me
     } else if (Tag_Center == tag) {
         HandleTagP(t, true);
-        if (!t->IsEndTag())
+        if (!t->IsEndTag()) {
             CurrStyle()->align = Align_Center;
+        }
     } else if ((Tag_Ul == tag) || (Tag_Ol == tag)) {
         HandleTagList(t);
     } else if (Tag_Li == tag) {
@@ -1151,8 +1205,9 @@ void HtmlFormatter::HandleHtmlTag(HtmlToken* t) {
     } else if (Tag_Dt == tag) {
         FlushCurrLine(true);
         ChangeFontStyle(FontStyleBold, t->IsStartTag());
-        if (t->IsStartTag())
+        if (t->IsStartTag()) {
             CurrStyle()->align = Align_Left;
+        }
     } else if (Tag_Dd == tag) {
         // TODO: separate indentation from list depth
         HandleTagList(t);
@@ -1162,15 +1217,17 @@ void HtmlFormatter::HandleHtmlTag(HtmlToken* t) {
     } else if (Tag_Tr == tag) {
         // display tables row-by-row for now
         FlushCurrLine(true);
-        if (t->IsStartTag())
+        if (t->IsStartTag()) {
             SetAlignment(Align_Left);
-        else if (t->IsEndTag())
+        } else if (t->IsEndTag()) {
             RevertStyleChange();
+        }
     } else if (Tag_Code == tag || Tag_Tt == tag) {
-        if (t->IsStartTag())
+        if (t->IsStartTag()) {
             SetFont(L"Courier New", (FontStyle)CurrFont()->GetStyle());
-        else if (t->IsEndTag())
+        } else if (t->IsEndTag()) {
             RevertStyleChange();
+        }
     } else if (Tag_Pre == tag) {
         HandleTagPre(t);
     } else if (Tag_Img == tag) {
@@ -1209,10 +1266,12 @@ void HtmlFormatter::HandleText(const char* s, size_t sLen) {
             const char* text = curr;
             currReparseIdx = curr - htmlParser->Start();
             // skip to the next newline
-            for (; curr < end && *curr != '\n'; curr++)
+            for (; curr < end && *curr != '\n'; curr++) {
                 ;
-            if (curr < end && curr > text && *(curr - 1) == '\r')
+            }
+            if (curr < end && curr > text && *(curr - 1) == '\r') {
                 curr--;
+            }
             EmitTextRun(text, curr);
             if ('\n' == *curr || '\r' == *curr) {
                 curr += '\r' == *curr ? 2 : 1;
@@ -1228,14 +1287,16 @@ void HtmlFormatter::HandleText(const char* s, size_t sLen) {
         // collapse multiple, consecutive white-spaces into a single space
         currReparseIdx = curr - htmlParser->Start();
         bool skipped = SkipWs(curr, end);
-        if (skipped)
+        if (skipped) {
             EmitElasticSpace();
+        }
 
         const char* text = curr;
         currReparseIdx = curr - htmlParser->Start();
         skipped = SkipNonWs(curr, end);
-        if (skipped)
+        if (skipped) {
             EmitTextRun(text, curr);
+        }
     }
 }
 
@@ -1251,16 +1312,19 @@ bool HtmlFormatter::IgnoreText() {
 
 // empty page is one that consists of only invisible instructions
 static bool IsEmptyPage(HtmlPage* p) {
-    if (!p)
+    if (!p) {
         return false;
+    }
     for (DrawInstr& i : p->instructions) {
         // if a page only consits of lines we consider it empty. It's different
         // than what Kindle does but I don't see the purpose of showing such
         // pages to the user
-        if (DrawInstrType::Line == i.type)
+        if (DrawInstrType::Line == i.type) {
             continue;
-        if (IsVisibleDrawInstr(i))
+        }
+        if (IsVisibleDrawInstr(i)) {
             return false;
+        }
     }
     // all instructions were invisible
     return true;
@@ -1272,31 +1336,40 @@ static bool IsEmptyPage(HtmlPage* p) {
 // or more pages, which we remeber and send to the caller
 // if we detect accumulated pages.
 HtmlPage* HtmlFormatter::Next(bool skipEmptyPages) {
+    gAllowAllocFailure++;
+    defer {
+        gAllowAllocFailure--;
+    };
+
     for (;;) {
         // send out all pages accumulated so far
         while (pagesToSend.size() > 0) {
             HtmlPage* ret = pagesToSend.PopAt(0);
             pageCount++;
-            if (skipEmptyPages && IsEmptyPage(ret))
+            if (skipEmptyPages && IsEmptyPage(ret)) {
                 delete ret;
-            else
+            } else {
                 return ret;
+            }
         }
         // we can call ourselves recursively to send outstanding
         // pages after parsing has finished so this is to detect
         // that case and really end parsing
-        if (finishedParsing)
+        if (finishedParsing) {
             return nullptr;
+        }
         HtmlToken* t = htmlParser->Next();
-        if (!t || t->IsError())
+        if (!t || t->IsError()) {
             break;
+        }
 
         currReparseIdx = t->GetReparsePoint() - htmlParser->Start();
         CrashIf(!ValidReparseIdx(currReparseIdx, htmlParser));
-        if (t->IsTag())
+        if (t->IsTag()) {
             HandleHtmlTag(t);
-        else if (!IgnoreText())
+        } else if (!IgnoreText()) {
             HandleText(t);
+        }
     }
     // force layout of the last line
     AutoCloseTags(tagNesting.size());
@@ -1323,7 +1396,7 @@ Vec<HtmlPage*>* HtmlFormatter::FormatAllPages(bool skipEmptyPages) {
 // mouse is over a link. There's a slight complication here: we only get explicit information about
 // strings, not about the whitespace and we should underline the whitespace as well. Also the text
 // should be underlined at a baseline
-void DrawHtmlPage(Graphics* g, mui::ITextRender* textDraw, Vec<DrawInstr>* drawInstructions, REAL offX, REAL offY,
+void DrawHtmlPage(Graphics* g, mui::ITextRender* textDraw, Vec<DrawInstr>* drawInstructions, float offX, float offY,
                   bool showBbox, Color textColor, bool* abortCookie) {
     Pen debugPen(Color(255, 0, 0), 1);
     // Pen linePen(Color(0, 0, 0), 2.f);
@@ -1334,76 +1407,82 @@ void DrawHtmlPage(Graphics* g, mui::ITextRender* textDraw, Vec<DrawInstr>* drawI
     // GDI text rendering suffers terribly if we call GetHDC()/ReleaseHDC() around every
     // draw, so first draw text and then paint everything else
     textDraw->SetTextColor(textColor);
-    Status status = Ok;
-    Timer t;
+#if 0
+    auto t = TimeGet();
+#endif
     textDraw->Lock();
     for (DrawInstr& i : *drawInstructions) {
         RectF bbox = i.bbox;
-        bbox.X += offX;
-        bbox.Y += offY;
+        bbox.x += offX;
+        bbox.y += offY;
         if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type) {
-            size_t strLen = str::Utf8ToWcharBuf(i.str.s, i.str.len, buf, dimof(buf));
+            size_t strLen = strconv::Utf8ToWcharBuf(i.str.s, i.str.len, buf, dimof(buf));
             // soft hyphens should not be displayed
             strLen -= str::RemoveChars(buf, L"\xad");
-            textDraw->Draw(buf, strLen, bbox, DrawInstrType::RtlString == i.type);
+            textDraw->Draw(buf, strLen, ToGdipRectF(bbox), DrawInstrType::RtlString == i.type);
         } else if (DrawInstrType::SetFont == i.type) {
             textDraw->SetFont(i.font);
         }
-        if (abortCookie && *abortCookie)
+        if (abortCookie && *abortCookie) {
             break;
+        }
     }
     textDraw->Unlock();
-    double dur = t.Stop();
-    lf("DrawHtmlPage: textDraw %.2f ms", dur);
+#if 0
+        double dur = TimeSinceInMs(t);
+        logf("DrawHtmlPage: textDraw %.2f ms\n", dur);
+#endif
 
+    Status status;
     for (DrawInstr& i : *drawInstructions) {
         RectF bbox = i.bbox;
-        bbox.X += offX;
-        bbox.Y += offY;
+        bbox.x += offX;
+        bbox.y += offY;
         if (DrawInstrType::Line == i.type) {
             // hr is a line drawn in the middle of bounding box
-            REAL y = floorf(bbox.Y + bbox.Height / 2.f + 0.5f);
-            PointF p1(bbox.X, y);
-            PointF p2(bbox.X + bbox.Width, y);
+            float y = floorf(bbox.y + bbox.dy / 2.f + 0.5f);
+            Gdiplus::PointF p1(bbox.x, y);
+            Gdiplus::PointF p2(bbox.x + bbox.dx, y);
             if (showBbox) {
-                status = g->DrawRectangle(&debugPen, bbox);
+                status = g->DrawRectangle(&debugPen, ToGdipRectF(bbox));
                 CrashIf(status != Ok);
             }
             status = g->DrawLine(&linePen, p1, p2);
             CrashIf(status != Ok);
         } else if (DrawInstrType::Image == i.type) {
             // TODO: cache the bitmap somewhere (?)
-            Bitmap* bmp = BitmapFromData(i.img.data, i.img.len);
+            Bitmap* bmp = BitmapFromData(i.img.AsSpan());
             if (bmp) {
-                status = g->DrawImage(bmp, bbox, 0, 0, (REAL)bmp->GetWidth(), (REAL)bmp->GetHeight(), UnitPixel);
+                status = g->DrawImage(bmp, ToGdipRectF(bbox), 0, 0, (float)bmp->GetWidth(), (float)bmp->GetHeight(),
+                                      UnitPixel);
                 // GDI+ sometimes seems to succeed in loading an image because it lazily decodes it
                 CrashIf(status != Ok && status != Win32Error);
             }
             delete bmp;
         } else if (DrawInstrType::LinkStart == i.type) {
             // TODO: set text color to blue
-            REAL y = floorf(bbox.Y + bbox.Height + 0.5f);
-            PointF p1(bbox.X, y);
-            PointF p2(bbox.X + bbox.Width, y);
+            float y = floorf(bbox.y + bbox.dy + 0.5f);
+            Gdiplus::PointF p1(bbox.x, y);
+            Gdiplus::PointF p2(bbox.x + bbox.dx, y);
             Pen linkPen(textColor);
             status = g->DrawLine(&linkPen, p1, p2);
             CrashIf(status != Ok);
         } else if (DrawInstrType::String == i.type || DrawInstrType::RtlString == i.type) {
             if (showBbox) {
-                status = g->DrawRectangle(&debugPen, bbox);
+                status = g->DrawRectangle(&debugPen, ToGdipRectF(bbox));
                 CrashIf(status != Ok);
             }
         } else if (DrawInstrType::LinkEnd == i.type) {
             // TODO: set text color back again
         } else if ((DrawInstrType::ElasticSpace == i.type) || (DrawInstrType::FixedSpace == i.type) ||
-                   (DrawInstrType::String == i.type) || (DrawInstrType::RtlString == i.type) ||
                    (DrawInstrType::SetFont == i.type) || (DrawInstrType::Anchor == i.type)) {
             // ignore
         } else {
             CrashIf(true);
         }
-        if (abortCookie && *abortCookie)
+        if (abortCookie && *abortCookie) {
             break;
+        }
     }
 }
 
@@ -1422,8 +1501,8 @@ HtmlFormatterArgs* CreateFormatterDefaultArgs(int dx, int dy, Allocator* textAll
     HtmlFormatterArgs* args = new HtmlFormatterArgs();
     args->SetFontName(L"Georgia");
     args->fontSize = 12.5f;
-    args->pageDx = (REAL)dx;
-    args->pageDy = (REAL)dy;
+    args->pageDx = (float)dx;
+    args->pageDy = (float)dy;
     args->textAllocator = textAllocator;
     args->textRenderMethod = GetTextRenderMethod();
     return args;

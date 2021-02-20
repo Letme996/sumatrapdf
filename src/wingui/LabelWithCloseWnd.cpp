@@ -1,11 +1,19 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "utils/BaseUtil.h"
-#include "LabelWithCloseWnd.h"
 #include "utils/Dpi.h"
 #include "utils/GdiPlusUtil.h"
 #include "utils/WinUtil.h"
+
+#include "wingui/WinGui.h"
+#include "wingui/Layout.h"
+#include "wingui/Window.h"
+#include "wingui/LabelWithCloseWnd.h"
+
+#define COL_CLOSE_X RGB(0xa0, 0xa0, 0xa0)
+#define COL_CLOSE_X_HOVER RGB(0xf9, 0xeb, 0xeb)  // white-ish
+#define COL_CLOSE_HOVER_BG RGB(0xC1, 0x35, 0x35) // red-ish
 
 #define CLOSE_BTN_DX 16
 #define CLOSE_BTN_DY 16
@@ -14,7 +22,7 @@
 #define WND_CLASS_NAME L"LabelWithCloseWndClass"
 
 static bool IsMouseOverClose(LabelWithCloseWnd* w) {
-    PointI p;
+    Point p;
     GetCursorPosInHwnd(w->hwnd, p);
     return w->closeBtnPos.Contains(p);
 }
@@ -22,38 +30,38 @@ static bool IsMouseOverClose(LabelWithCloseWnd* w) {
 // Draws the 'x' close button in regular state or onhover state
 // Tries to mimic visual style of Chrome tab close button
 static void DrawCloseButton(HDC hdc, LabelWithCloseWnd* w) {
-    Graphics g(hdc);
-    g.SetCompositingQuality(CompositingQualityHighQuality);
-    g.SetSmoothingMode(SmoothingModeAntiAlias);
-    g.SetPageUnit(UnitPixel);
+    Gdiplus::Graphics g(hdc);
+    g.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    g.SetPageUnit(Gdiplus::UnitPixel);
     // GDI+ doesn't pick up the window's orientation through the device context,
     // so we have to explicitly mirror all rendering horizontally
     if (IsRtl(w->hwnd)) {
         g.ScaleTransform(-1, 1);
-        g.TranslateTransform((REAL)ClientRect(w->hwnd).dx, 0, MatrixOrderAppend);
+        g.TranslateTransform((float)ClientRect(w->hwnd).dx, 0, Gdiplus::MatrixOrderAppend);
     }
 
-    Color c;
-    RectI& r = w->closeBtnPos;
+    Gdiplus::Color c;
+    Rect& r = w->closeBtnPos;
 
     // in onhover state, background is a red-ish circle
     bool onHover = IsMouseOverClose(w);
     if (onHover) {
         c.SetFromCOLORREF(COL_CLOSE_HOVER_BG);
-        SolidBrush b(c);
+        Gdiplus::SolidBrush b(c);
         g.FillEllipse(&b, r.x, r.y, r.dx - 2, r.dy - 2);
     }
 
     // draw 'x'
     c.SetFromCOLORREF(onHover ? COL_CLOSE_X_HOVER : COL_CLOSE_X);
     g.TranslateTransform((float)r.x, (float)r.y);
-    Pen p(c, 2);
+    Gdiplus::Pen p(c, 2);
     if (onHover) {
-        g.DrawLine(&p, Point(4, 4), Point(r.dx - 6, r.dy - 6));
-        g.DrawLine(&p, Point(r.dx - 6, 4), Point(4, r.dy - 6));
+        g.DrawLine(&p, Gdiplus::Point(4, 4), Gdiplus::Point(r.dx - 6, r.dy - 6));
+        g.DrawLine(&p, Gdiplus::Point(r.dx - 6, 4), Gdiplus::Point(4, r.dy - 6));
     } else {
-        g.DrawLine(&p, Point(4, 5), Point(r.dx - 6, r.dy - 5));
-        g.DrawLine(&p, Point(r.dx - 6, 5), Point(4, r.dy - 5));
+        g.DrawLine(&p, Gdiplus::Point(4, 5), Gdiplus::Point(r.dx - 6, r.dy - 5));
+        g.DrawLine(&p, Gdiplus::Point(r.dx - 6, 5), Gdiplus::Point(4, r.dy - 5));
     }
 }
 
@@ -61,11 +69,11 @@ static void PaintHDC(LabelWithCloseWnd* w, HDC hdc, const PAINTSTRUCT& ps) {
     HBRUSH br = CreateSolidBrush(w->bgCol);
     FillRect(hdc, &ps.rcPaint, br);
 
-    ClientRect cr(w->hwnd);
+    Rect cr = ClientRect(w->hwnd);
 
-    int x = DpiScaleX(w->hwnd, w->padX);
-    int y = DpiScaleY(w->hwnd, w->padY);
-    UINT opts = ETO_OPAQUE;
+    int x = DpiScale(w->hwnd, w->padX);
+    int y = DpiScale(w->hwnd, w->padY);
+    uint opts = ETO_OPAQUE;
     if (IsRtl(w->hwnd)) {
         opts = opts | ETO_RTLREADING;
     }
@@ -78,16 +86,16 @@ static void PaintHDC(LabelWithCloseWnd* w, HDC hdc, const PAINTSTRUCT& ps) {
     SetBkColor(hdc, w->bgCol);
 
     WCHAR* s = win::GetText(w->hwnd);
-    ExtTextOut(hdc, x, y, opts, nullptr, s, (UINT)str::Len(s), nullptr);
+    ExtTextOut(hdc, x, y, opts, nullptr, s, (uint)str::Len(s), nullptr);
     free(s);
 
     // Text might be too long and invade close button area. We just re-paint
     // the background, which is not the pretties but works.
     // A better way would be to intelligently truncate text or shrink the font
     // size (within reason)
-    x = w->closeBtnPos.x - DpiScaleX(w->hwnd, LABEL_BUTTON_SPACE_DX);
-    RectI ri(x, 0, cr.dx - x, cr.dy);
-    RECT r = ri.ToRECT();
+    x = w->closeBtnPos.x - DpiScale(w->hwnd, LABEL_BUTTON_SPACE_DX);
+    Rect ri(x, 0, cr.dx - x, cr.dy);
+    RECT r = ToRECT(ri);
     FillRect(hdc, &r, br);
 
     DrawCloseButton(hdc, w);
@@ -101,21 +109,21 @@ static void PaintHDC(LabelWithCloseWnd* w, HDC hdc, const PAINTSTRUCT& ps) {
 static void OnPaint(LabelWithCloseWnd* w) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(w->hwnd, &ps);
-    DoubleBuffer buffer(w->hwnd, RectI::FromRECT(ps.rcPaint));
+    DoubleBuffer buffer(w->hwnd, Rect::FromRECT(ps.rcPaint));
     PaintHDC(w, buffer.GetDC(), ps);
     buffer.Flush(hdc);
     EndPaint(w->hwnd, &ps);
 }
 
 static void CalcCloseButtonPos(LabelWithCloseWnd* w, int dx, int dy) {
-    int btnDx = DpiScaleX(w->hwnd, CLOSE_BTN_DX);
-    int btnDy = DpiScaleY(w->hwnd, CLOSE_BTN_DY);
-    int x = dx - btnDx - DpiScaleX(w->hwnd, w->padX);
+    int btnDx = DpiScale(w->hwnd, CLOSE_BTN_DX);
+    int btnDy = DpiScale(w->hwnd, CLOSE_BTN_DY);
+    int x = dx - btnDx - DpiScale(w->hwnd, w->padX);
     int y = 0;
     if (dy > btnDy) {
         y = (dy - btnDy) / 2;
     }
-    w->closeBtnPos = RectI(x, y, btnDx, btnDy);
+    w->closeBtnPos = Rect(x, y, btnDx, btnDy);
 }
 
 static LRESULT CALLBACK WndProcLabelWithClose(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -173,7 +181,7 @@ static LRESULT CALLBACK WndProcLabelWithClose(HWND hwnd, UINT msg, WPARAM wp, LP
     if (WM_LBUTTONUP == msg) {
         if (IsMouseOverClose(w)) {
             HWND parent = GetParent(w->hwnd);
-            SendMessage(parent, WM_COMMAND, w->cmd, 0);
+            HwndSendCommand(parent, w->cmd);
         }
         return 0;
     }
@@ -234,19 +242,19 @@ bool LabelWithCloseWnd::Create(HWND parent, int cmd) {
     return this->hwnd != nullptr;
 }
 
-SizeI LabelWithCloseWnd::GetIdealSize() {
+Size LabelWithCloseWnd::GetIdealSize() {
     WCHAR* s = win::GetText(this->hwnd);
-    SizeI size = TextSizeInHwnd(this->hwnd, s);
+    Size size = TextSizeInHwnd(this->hwnd, s);
     free(s);
-    int btnDx = DpiScaleX(this->hwnd, CLOSE_BTN_DX);
-    int btnDy = DpiScaleY(this->hwnd, CLOSE_BTN_DY);
+    int btnDx = DpiScale(this->hwnd, CLOSE_BTN_DX);
+    int btnDy = DpiScale(this->hwnd, CLOSE_BTN_DY);
     size.dx += btnDx;
-    size.dx += DpiScaleX(this->hwnd, LABEL_BUTTON_SPACE_DX);
-    size.dx += 2 * DpiScaleX(this->hwnd, this->padX);
+    size.dx += DpiScale(this->hwnd, LABEL_BUTTON_SPACE_DX);
+    size.dx += 2 * DpiScale(this->hwnd, this->padX);
     if (size.dy < btnDy) {
         size.dy = btnDy;
     }
-    size.dy += 2 * DpiScaleY(this->hwnd, this->padY);
+    size.dy += 2 * DpiScale(this->hwnd, this->padY);
     return size;
 }
 
@@ -259,4 +267,39 @@ void LabelWithCloseWnd::SetPaddingXY(int x, int y) {
     this->padX = x;
     this->padY = y;
     ScheduleRepaint(this->hwnd);
+}
+
+Kind kindLabelWithClose = "labelWithClose";
+
+LabelWithCloseCtrl::LabelWithCloseCtrl(HWND p) {
+    kind = kindLabelWithClose;
+    parent = p;
+    dwStyle = WS_VISIBLE | WS_CHILD;
+    dwExStyle = 0;
+    backgroundColor = GetSysColor(COLOR_BTNFACE);
+    textColor = GetSysColor(COLOR_BTNTEXT);
+}
+
+LabelWithCloseCtrl::~LabelWithCloseCtrl() {
+}
+
+void LabelWithCloseCtrl::SetPaddingXY(int x, int y) {
+    padX = x;
+    padY = y;
+    ScheduleRepaint(hwnd);
+}
+
+Size LabelWithCloseCtrl::GetIdealSize() {
+    AutoFreeWstr s = strconv::Utf8ToWstr(text.AsView());
+    Size size = TextSizeInHwnd(hwnd, s);
+    int btnDx = DpiScale(hwnd, CLOSE_BTN_DX);
+    int btnDy = DpiScale(hwnd, CLOSE_BTN_DY);
+    size.dx += btnDx;
+    size.dx += DpiScale(hwnd, LABEL_BUTTON_SPACE_DX);
+    size.dx += 2 * DpiScale(hwnd, padX);
+    if (size.dy < btnDy) {
+        size.dy = btnDy;
+    }
+    size.dy += 2 * DpiScale(hwnd, padY);
+    return {size.dx, size.dy};
 }

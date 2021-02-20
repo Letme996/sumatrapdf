@@ -1,7 +1,7 @@
-/* Copyright 2015 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
-/* VecSegmented has (mostly) the same API as std::vector but allocates
+/* VecSegmented has (mostly) the same API as Vec but allocates
    using PoolAllocator. This means it's append only (we have no
    easy way to remove an item). The upside is that we can retain
    pointers to elements within the vector because we never
@@ -10,31 +10,39 @@
    It's also safe to read allocated elements in any thread.
 */
 template <typename T>
-class VecSegmented {
-  protected:
-    size_t len;
+struct VecSegmented {
     PoolAllocator allocator;
 
-  public:
-    VecSegmented() : len(0) { allocator.SetAllocRounding(sizeof(T)); }
+    VecSegmented() = default;
 
-    ~VecSegmented() { allocator.FreeAll(); }
+    ~VecSegmented() {
+        allocator.FreeAll();
+    }
 
-    T* AllocAtEnd(size_t count = 1) {
-        void* p = allocator.Alloc(count * sizeof(T));
-        len += count;
+    T* AllocAtEnd() {
+        void* p = allocator.Alloc(sizeof(T));
         return reinterpret_cast<T*>(p);
     }
 
-    size_t size() const { return len; }
+    size_t Size() const {
+        return allocator.nAllocs;
+    }
 
-    // TODO: push_back() should return void
-    T* push_back(const T& el) {
+    T* AtPtr(int i) {
+        void* p = allocator.At(i);
+        return (T*)p;
+    }
+
+    T* Append(const T& el) {
         T* elPtr = AllocAtEnd();
         *elPtr = el;
         return elPtr;
     }
 
-    PoolAllocator::Iter<T> begin() { return allocator.begin<T>(); }
-    PoolAllocator::Iter<T> end() { return allocator.end<T>(); }
+    PoolAllocator::Iter<T> begin() {
+        return allocator.begin<T>();
+    }
+    PoolAllocator::Iter<T> end() {
+        return allocator.end<T>();
+    }
 };

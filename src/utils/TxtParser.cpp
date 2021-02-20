@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "BaseUtil.h"
@@ -27,6 +27,10 @@ things into key/values, just to decode tree structure and *help* to interpret
 a given line either as a simple string or key/value pair. It's
 up to the caller to interpret the data.
 */
+
+TxtNode::TxtNode(TxtNode::Type tp) {
+    type = tp;
+}
 
 void TxtNode::AddChild(TxtNode* child) {
     if (firstChild == nullptr) {
@@ -110,7 +114,7 @@ TxtNode* TxtParser::AllocTxtNode(TxtNode::Type nodeType) {
 }
 
 TxtNode* TxtParser::AllocTxtNodeFromToken(const Token& tok, TxtNode::Type nodeType) {
-    AssertCrash((TxtNode::Type::Text == nodeType) || (TxtNode::Type::Struct == nodeType));
+    CrashIf(!((TxtNode::Type::Text == nodeType) || (TxtNode::Type::Struct == nodeType)));
     TxtNode* node = AllocTxtNode(nodeType);
     node->lineStart = tok.lineStart;
     node->valStart = tok.valStart;
@@ -120,18 +124,17 @@ TxtNode* TxtParser::AllocTxtNodeFromToken(const Token& tok, TxtNode::Type nodeTy
     return node;
 }
 
-// we will modify s in-place
 void TxtParser::SetToParse(const std::string_view& str) {
-    auto tmp = str::conv::UnknownToUtf8(str);
-    data = tmp.StealData();
-    char* d = data.data;
-    size_t sLen = data.size;
-    size_t n = str::NormalizeNewlinesInPlace(d, d + sLen);
+    data = strconv::UnknownToUtf8(str);
+    char* d = (char*)data.Get();
+    size_t dLen = data.size();
+    size_t n = str::NormalizeNewlinesInPlace(d, d + dLen);
     toParse.Set(d, n);
 
     // we create an implicit array node to hold the nodes we'll parse
     CrashIf(0 != nodes.size());
-    nodes.push_back(AllocTxtNode(TxtNode::Type::Array));
+    TxtNode* node = AllocTxtNode(TxtNode::Type::Array);
+    nodes.Append(node);
 }
 
 static bool IsCommentStartChar(char c) {
@@ -212,14 +215,16 @@ static bool ParseStructStart(TxtParser& parser) {
     slice.SkipWsUntilNewline();
     // "foo  =  [  "
     //          ^
-    if ('[' != slice.CurrChar())
+    if ('[' != slice.CurrChar()) {
         return false;
+    }
     slice.Skip(1);
     slice.SkipWsUntilNewline();
     // "foo  =  [  "
     //             ^
-    if (!(slice.Finished() || ('\n' == slice.CurrChar())))
+    if (!(slice.Finished() || ('\n' == slice.CurrChar()))) {
         return false;
+    }
 
     Token& tok = parser.tok;
     tok.type = Token::Type::StructStart;
@@ -252,8 +257,9 @@ static bool ParseKey(TxtParser& parser) {
         keyEnd--;
     } else {
         slice.SkipWsUntilNewline();
-        if ('=' != slice.CurrChar())
+        if ('=' != slice.CurrChar()) {
             return false;
+        }
         // "foo  =  bar"
         //       ^
         slice.Skip(1);
@@ -312,8 +318,9 @@ Again:
         return;
     }
 
-    if (ParseStructStart(parser))
+    if (ParseStructStart(parser)) {
         return;
+    }
 
     tok.type = Token::Type::String;
     ParseKey(parser);
@@ -324,8 +331,9 @@ Again:
     char* origEnd = slice.curr;
     char* valEnd = UnescapeLineInPlace(origEnd, slice.end, parser.escapeChar);
     CrashIf((origEnd < slice.end) && (*origEnd != '\n'));
-    if (valEnd < slice.end)
+    if (valEnd < slice.end) {
         *valEnd = 0;
+    }
     tok.valEnd = valEnd;
 
     slice.curr = origEnd;
@@ -361,13 +369,13 @@ static void ParseNodes(TxtParser& parser) {
             if (1 == parser.nodes.size()) {
                 goto Failed;
             }
-            parser.nodes.pop_back();
+            parser.nodes.RemoveLast();
             continue;
         }
         TxtNode* currParent = parser.nodes.at(parser.nodes.size() - 1);
         currParent->AddChild(currNode);
         if (TxtNode::Type::Text != currNode->type) {
-            parser.nodes.push_back(currNode);
+            parser.nodes.Append(currNode);
         }
     }
 Failed:
@@ -382,19 +390,19 @@ bool ParseTxt(TxtParser& parser) {
     return true;
 }
 
-static void AppendNest(str::Str<char>& s, int nest) {
+static void AppendNest(str::Str& s, int nest) {
     while (nest > 0) {
         s.Append("    ");
         --nest;
     }
 }
 
-static void AppendWsTrimEnd(str::Str<char>& res, char* s, char* e) {
+static void AppendWsTrimEnd(str::Str& res, char* s, char* e) {
     str::TrimWsEnd(s, e);
     res.Append(s, e - s);
 }
 
-static void PrettyPrintKeyVal(TxtNode* curr, int nest, str::Str<char>& res) {
+static void PrettyPrintKeyVal(TxtNode* curr, int nest, str::Str& res) {
     AppendNest(res, nest);
     if (curr->keyStart) {
         AppendWsTrimEnd(res, curr->keyStart, curr->keyEnd);
@@ -408,7 +416,7 @@ static void PrettyPrintKeyVal(TxtNode* curr, int nest, str::Str<char>& res) {
     }
 }
 
-static void PrettyPrintNode(TxtNode* curr, int nest, str::Str<char>& res) {
+static void PrettyPrintNode(TxtNode* curr, int nest, str::Str& res) {
     if (curr->IsText()) {
         PrettyPrintKeyVal(curr, nest, res);
         return;
@@ -436,8 +444,8 @@ static void PrettyPrintNode(TxtNode* curr, int nest, str::Str<char>& res) {
     }
 }
 
-OwnedData PrettyPrintTxt(const TxtParser& parser) {
-    str::Str<char> res;
+str::Str PrettyPrintTxt(const TxtParser& parser) {
+    str::Str res;
     PrettyPrintNode(parser.nodes.at(0), -1, res);
-    return res.StealAsOwnedData();
+    return res;
 }

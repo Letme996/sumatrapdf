@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 #include "utils/BaseUtil.h"
@@ -8,36 +8,37 @@
 #include "utils/FileUtil.h"
 #include "utils/WinUtil.h"
 #include "utils/CryptoUtil.h"
-#include "AppTools.h"
 #include "utils/DirIter.h"
+#include "utils/RegistryPaths.h"
 
+#include "AppTools.h"
+#include "SumatraConfig.h"
 #include "Translations.h"
 #include "Version.h"
-
-#define REG_PATH_UNINST L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" APP_NAME_STR
 
 /* Returns true, if a Registry entry indicates that this executable has been
    created by an installer (and should be updated through an installer) */
 bool HasBeenInstalled() {
-    std::unique_ptr<WCHAR> installedPath(ReadRegStr(HKEY_CURRENT_USER, REG_PATH_UNINST, L"InstallLocation"));
-    // cf. GetInstallationDir() in installer\Installer.cpp
-    if (!installedPath) {
-        installedPath.reset(ReadRegStr(HKEY_LOCAL_MACHINE, REG_PATH_UNINST, L"InstallLocation"));
-    }
-
+    // see GetInstallationDir() in Installer.cpp
+    const WCHAR* appName = GetAppName();
+    AutoFreeWstr regPathUninst = str::Join(L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\", appName);
+    AutoFreeWstr installedPath = ReadRegStr2(regPathUninst, L"InstallLocation");
     if (!installedPath) {
         return false;
     }
 
-    std::unique_ptr<WCHAR> exePath(GetExePath());
+    AutoFreeWstr exePath = GetExePath();
+
     if (!exePath) {
         return false;
     }
 
-    if (!str::EndsWithI(installedPath.get(), L".exe")) {
-        installedPath.reset(path::Join(installedPath.get(), path::GetBaseName(exePath.get())));
+    WCHAR* toFree = nullptr;
+    if (!str::EndsWithI(installedPath, L".exe")) {
+        WCHAR* tmp = path::Join(installedPath, path::GetBaseNameNoFree(exePath));
+        installedPath.Set(tmp);
     }
-    return path::IsSame(installedPath.get(), exePath.get());
+    return path::IsSame(installedPath, exePath);
 }
 
 /* Return false if this program has been started from "Program Files" directory
@@ -56,8 +57,8 @@ bool IsRunningInPortableMode() {
         return false;
     }
 
-    AutoFreeW exePath(GetExePath());
-    AutoFreeW programFilesDir(GetSpecialFolder(CSIDL_PROGRAM_FILES));
+    AutoFreeWstr exePath(GetExePath());
+    AutoFreeWstr programFilesDir(GetSpecialFolder(CSIDL_PROGRAM_FILES));
     // if we can't get a path, assume we're not running from "Program Files"
     if (!exePath || !programFilesDir) {
         return true;
@@ -66,7 +67,7 @@ bool IsRunningInPortableMode() {
     // check if one of the exePath's parent directories is "Program Files"
     // (or a junction to it)
     WCHAR* baseName;
-    while ((baseName = (WCHAR*)path::GetBaseName(exePath)) > exePath) {
+    while ((baseName = (WCHAR*)path::GetBaseNameNoFree(exePath)) > exePath) {
         baseName[-1] = '\0';
         if (path::IsSame(programFilesDir, exePath)) {
             sCacheIsPortable = 0;
@@ -77,7 +78,7 @@ bool IsRunningInPortableMode() {
     return true;
 }
 
-static AutoFreeW gAppDataDir;
+static AutoFreeWstr gAppDataDir;
 
 void SetAppDataPath(const WCHAR* path) {
     gAppDataDir.Set(path::Normalize(path));
@@ -86,8 +87,9 @@ void SetAppDataPath(const WCHAR* path) {
 /* Generate the full path for a filename used by the app in the userdata path. */
 /* Caller needs to free() the result. */
 WCHAR* AppGenDataFilename(const WCHAR* fileName) {
-    if (!fileName)
+    if (!fileName) {
         return nullptr;
+    }
 
     if (gAppDataDir && dir::Exists(gAppDataDir)) {
         return path::Join(gAppDataDir, fileName);
@@ -98,36 +100,39 @@ WCHAR* AppGenDataFilename(const WCHAR* fileName) {
         return path::GetPathOfFileInAppDir(fileName);
     }
 
-    /* Use %APPDATA% */
-    AutoFreeW path(GetSpecialFolder(CSIDL_APPDATA, true));
-    CrashIf(!path);
-    if (!path)
+    AutoFreeWstr path = GetSpecialFolder(CSIDL_LOCAL_APPDATA, true);
+    if (!path) {
         return nullptr;
-    path.Set(path::Join(path, APP_NAME_STR));
-    if (!path)
+    }
+    const WCHAR* appName = GetAppName();
+    path = path::Join(path, appName);
+    if (!path) {
         return nullptr;
+    }
     bool ok = dir::Create(path);
-    if (!ok)
+    if (!ok) {
         return nullptr;
+    }
     return path::Join(path, fileName);
 }
 
+#if 0
 WCHAR* PathForFileInAppDataDir(const WCHAR* fileName) {
-    if (!fileName)
+    if (!fileName) {
         return nullptr;
+    }
 
     /* Use local (non-roaming) app data directory */
-    WCHAR* dataDir = GetSpecialFolder(CSIDL_LOCAL_APPDATA, true);
-    WCHAR* dir = path::Join(dataDir, APP_NAME_STR);
-    free(dataDir);
-
-    defer { str::Free(dir); };
+    AutoFreeWstr dataDir = GetSpecialFolder(CSIDL_LOCAL_APPDATA, true);
+    AutoFreeWstr dir = path::Join(dataDir, APP_NAME_STR);
     bool ok = dir::Create(dir);
-    if (!ok)
+    if (!ok) {
         return nullptr;
+    }
 
     return path::Join(dir, fileName);
 }
+#endif
 
 /*
 Structure of registry entries for associating Sumatra with PDF files.
@@ -171,50 +176,69 @@ Note: When making changes below, please also adjust WriteExtendedFileExtensionIn
 UnregisterFromBeingDefaultViewer() and RemoveOwnRegistryKeys() in Installer.cpp.
 
 */
-#define REG_CLASSES_APP L"Software\\Classes\\" APP_NAME_STR
-#define REG_CLASSES_PDF L"Software\\Classes\\.pdf"
-
-#define REG_WIN_CURR L"Software\\Microsoft\\Windows\\CurrentVersion"
-#define REG_EXPLORER_PDF_EXT REG_WIN_CURR L"\\Explorer\\FileExts\\.pdf"
 
 void DoAssociateExeWithPdfExtension(HKEY hkey) {
-    AutoFreeW exePath(GetExePath());
-    if (!exePath)
+    AutoFreeWstr exePath(GetExePath());
+    if (!exePath) {
         return;
+    }
 
-    AutoFreeW prevHandler(nullptr);
+    AutoFreeWstr REG_CLASSES_APP = str::Join(L"Software\\Classes\\", GetAppName());
+
+    AutoFreeWstr prevHandler(nullptr);
     // Remember the previous default app for the Uninstaller
     prevHandler.Set(ReadRegStr(hkey, REG_CLASSES_PDF, nullptr));
-    if (prevHandler && !str::Eq(prevHandler, APP_NAME_STR))
+
+    bool ok = false;
+    const WCHAR* appName = GetAppName();
+    if (prevHandler && !str::Eq(prevHandler, appName)) {
         WriteRegStr(hkey, REG_CLASSES_APP, L"previous.pdf", prevHandler);
+    }
 
     WriteRegStr(hkey, REG_CLASSES_APP, nullptr, _TR("PDF Document"));
-    WCHAR* icon_path = str::Join(exePath, L",1");
-    WriteRegStr(hkey, REG_CLASSES_APP L"\\DefaultIcon", nullptr, icon_path);
-    free(icon_path);
+    AutoFreeWstr icon_path = str::Join(exePath, L",1");
+    {
+        AutoFreeWstr key = str::Join(REG_CLASSES_APP, L"\\DefaultIcon");
+        WriteRegStr(hkey, key, nullptr, icon_path);
+    }
 
-    WriteRegStr(hkey, REG_CLASSES_APP L"\\shell", nullptr, L"open");
+    {
+        AutoFreeWstr key = str::Join(REG_CLASSES_APP, L"\\shell");
+        WriteRegStr(hkey, key, nullptr, L"open");
+    }
 
-    AutoFreeW cmdPath(str::Format(L"\"%s\" \"%%1\" %%*", exePath.Get())); // "${exePath}" "%1" %*
-    bool ok = WriteRegStr(hkey, REG_CLASSES_APP L"\\shell\\open\\command", nullptr, cmdPath);
+    // "${exePath}" "%1" %*
+    AutoFreeWstr cmdPath = str::Format(L"\"%s\" \"%%1\" %%*", exePath.Get());
+    {
+        AutoFreeWstr key = str::Join(REG_CLASSES_APP, L"\\shell\\open\\command");
+        ok = WriteRegStr(hkey, key, nullptr, cmdPath);
+    }
 
-    // also register for printing
-    cmdPath.Set(str::Format(L"\"%s\" -print-to-default \"%%1\"", exePath.Get())); // "${exePath}" -print-to-default "%1"
-    WriteRegStr(hkey, REG_CLASSES_APP L"\\shell\\print\\command", nullptr, cmdPath);
+    // register for printing: "${exePath}" -print-to-default "%1"
+    cmdPath.Set(str::Format(L"\"%s\" -print-to-default \"%%1\"", exePath.Get()));
+    {
+        AutoFreeWstr key = str::Join(REG_CLASSES_APP, L"\\shell\\print\\command");
+        WriteRegStr(hkey, key, nullptr, cmdPath);
+    }
 
-    // also register for printing to specific printer
-    cmdPath.Set(str::Format(L"\"%s\" -print-to \"%%2\" \"%%1\"", exePath.Get())); // "${exePath}" -print-to "%2" "%1"
-    WriteRegStr(hkey, REG_CLASSES_APP L"\\shell\\printto\\command", nullptr, cmdPath);
+    // register for printing to specific printer:
+    // "${exePath}" -print-to "%2" "%1"
+    cmdPath.Set(str::Format(L"\"%s\" -print-to \"%%2\" \"%%1\"", exePath.Get()));
+    {
+        AutoFreeWstr key = str::Join(REG_CLASSES_APP, L"\\shell\\printto\\command");
+        WriteRegStr(hkey, key, nullptr, cmdPath);
+    };
 
     // Only change the association if we're confident, that we've registered ourselves well enough
-    if (!ok)
+    if (!ok) {
         return;
+    }
 
-    WriteRegStr(hkey, REG_CLASSES_PDF, nullptr, APP_NAME_STR);
+    WriteRegStr(hkey, REG_CLASSES_PDF, nullptr, appName);
     // TODO: also add SumatraPDF to the Open With lists for the other supported extensions?
-    WriteRegStr(hkey, REG_CLASSES_PDF L"\\OpenWithProgids", APP_NAME_STR, L"");
+    WriteRegStr(hkey, REG_CLASSES_PDF L"\\OpenWithProgids", appName, L"");
     if (hkey == HKEY_CURRENT_USER) {
-        WriteRegStr(hkey, REG_EXPLORER_PDF_EXT, L"Progid", APP_NAME_STR);
+        WriteRegStr(hkey, REG_EXPLORER_PDF_EXT, L"Progid", appName);
         CrashIf(hkey == 0); // to appease prefast
         SHDeleteValue(hkey, REG_EXPLORER_PDF_EXT, L"Application");
         DeleteRegKey(hkey, REG_EXPLORER_PDF_EXT L"\\UserChoice", true);
@@ -225,40 +249,56 @@ void DoAssociateExeWithPdfExtension(HKEY hkey) {
 // Sumatra with .pdf files exist and have the right values
 bool IsExeAssociatedWithPdfExtension() {
     // this one doesn't have to exist but if it does, it must be APP_NAME_STR
-    AutoFreeW tmp(ReadRegStr(HKEY_CURRENT_USER, REG_EXPLORER_PDF_EXT, L"Progid"));
-    if (tmp && !str::Eq(tmp, APP_NAME_STR))
+    const WCHAR* appName = GetAppName();
+
+    AutoFreeWstr tmp(ReadRegStr(HKEY_CURRENT_USER, REG_EXPLORER_PDF_EXT, L"Progid"));
+    if (tmp && !str::Eq(tmp, appName)) {
         return false;
+    }
 
     // this one doesn't have to exist but if it does, it must be APP_NAME_STR.exe
     tmp.Set(ReadRegStr(HKEY_CURRENT_USER, REG_EXPLORER_PDF_EXT, L"Application"));
-    if (tmp && !str::EqI(tmp, APP_NAME_STR L".exe"))
+    AutoFreeWstr exeName = str::Join(appName, L".exe");
+    if (tmp && !str::EqI(tmp, exeName)) {
         return false;
+    }
 
     // this one doesn't have to exist but if it does, it must be APP_NAME_STR
     tmp.Set(ReadRegStr(HKEY_CURRENT_USER, REG_EXPLORER_PDF_EXT L"\\UserChoice", L"Progid"));
-    if (tmp && !str::Eq(tmp, APP_NAME_STR))
+    if (tmp && !str::Eq(tmp, appName)) {
         return false;
+    }
 
     // HKEY_CLASSES_ROOT\.pdf default key must exist and be equal to APP_NAME_STR
     tmp.Set(ReadRegStr(HKEY_CLASSES_ROOT, L".pdf", nullptr));
-    if (!str::Eq(tmp, APP_NAME_STR))
+    if (!str::Eq(tmp, appName)) {
         return false;
+    }
 
     // HKEY_CLASSES_ROOT\SumatraPDF\shell\open default key must be: open
-    tmp.Set(ReadRegStr(HKEY_CLASSES_ROOT, APP_NAME_STR L"\\shell", nullptr));
-    if (!str::EqI(tmp, L"open"))
+    {
+        AutoFreeWstr key = str::Join(appName, L"\\shell");
+        tmp.Set(ReadRegStr(HKEY_CLASSES_ROOT, key, nullptr));
+    }
+    if (!str::EqI(tmp, L"open")) {
         return false;
+    }
 
     // HKEY_CLASSES_ROOT\SumatraPDF\shell\open\command default key must be: "${exe_path}" "%1"
-    tmp.Set(ReadRegStr(HKEY_CLASSES_ROOT, APP_NAME_STR L"\\shell\\open\\command", nullptr));
-    if (!tmp)
+    {
+        AutoFreeWstr key = str::Join(appName, L"\\shell\\open\\command");
+        tmp.Set(ReadRegStr(HKEY_CLASSES_ROOT, key, nullptr));
+    }
+    if (!tmp) {
         return false;
+    }
 
     WStrVec argList;
     ParseCmdLine(tmp, argList);
-    AutoFreeW exePath(GetExePath());
-    if (!exePath || !argList.Contains(L"%1") || !str::Find(tmp, L"\"%1\""))
+    AutoFreeWstr exePath(GetExePath());
+    if (!exePath || !argList.Contains(L"%1") || !str::Find(tmp, L"\"%1\"")) {
         return false;
+    }
 
     return path::IsSame(exePath, argList.at(0));
 }
@@ -325,29 +365,32 @@ WCHAR* AutoDetectInverseSearchCommands(HWND hwndCombo) {
     WStrList foundExes;
 
     for (int i = 0; i < dimof(editor_rules); i++) {
-        AutoFreeW path(ReadRegStr(editor_rules[i].RegRoot, editor_rules[i].RegKey, editor_rules[i].RegValue));
-        if (!path)
+        AutoFreeWstr path(ReadRegStr(editor_rules[i].RegRoot, editor_rules[i].RegKey, editor_rules[i].RegValue));
+        if (!path) {
             continue;
+        }
 
-        AutoFreeW exePath;
+        AutoFreeWstr exePath;
         if (editor_rules[i].Type == SiblingPath) {
             // remove file part
-            AutoFreeW dir(path::GetDir(path));
+            AutoFreeWstr dir(path::GetDir(path));
             exePath.Set(path::Join(dir, editor_rules[i].BinaryFilename));
-        } else if (editor_rules[i].Type == BinaryDir)
+        } else if (editor_rules[i].Type == BinaryDir) {
             exePath.Set(path::Join(path, editor_rules[i].BinaryFilename));
-        else // if (editor_rules[i].Type == BinaryPath)
+        } else { // if (editor_rules[i].Type == BinaryPath)
             exePath.Set(path.StealData());
+        }
         // don't show duplicate entries
-        if (foundExes.FindI(exePath) != -1)
+        if (foundExes.FindI(exePath) != -1) {
             continue;
+        }
         // don't show inexistent paths (and don't try again for them)
         if (!file::Exists(exePath)) {
             foundExes.Append(exePath.StealData());
             continue;
         }
 
-        AutoFreeW editorCmd(str::Format(L"\"%s\" %s", exePath.Get(), editor_rules[i].InverseSearchArgs));
+        AutoFreeWstr editorCmd(str::Format(L"\"%s\" %s", exePath.Get(), editor_rules[i].InverseSearchArgs));
 
         if (!hwndCombo) {
             // no need to fill a combo box: return immeditately after finding an editor.
@@ -355,16 +398,18 @@ WCHAR* AutoDetectInverseSearchCommands(HWND hwndCombo) {
         }
 
         ComboBox_AddString(hwndCombo, editorCmd);
-        if (!firstEditor)
+        if (!firstEditor) {
             firstEditor = editorCmd.StealData();
+        }
         foundExes.Append(exePath.StealData());
     }
 
     // Fall back to notepad as a default handler
     if (!firstEditor) {
         firstEditor = str::Dup(L"notepad %f");
-        if (hwndCombo)
+        if (hwndCombo) {
             ComboBox_AddString(hwndCombo, firstEditor);
+        }
     }
     return firstEditor;
 }
@@ -375,12 +420,10 @@ WCHAR* AutoDetectInverseSearchCommands(HWND hwndCombo) {
 // selects all text in an edit box if it's selected either
 // through a keyboard shortcut or a non-selecting mouse click
 // (or responds to Ctrl+Backspace as nowadays expected)
-bool ExtendedEditWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    UNUSED(lParam);
-
+bool ExtendedEditWndProc(HWND hwnd, UINT msg, WPARAM wp, [[maybe_unused]] LPARAM lp) {
     static bool delayFocus = false;
 
-    switch (message) {
+    switch (msg) {
         case WM_LBUTTONDOWN:
             delayFocus = !IsFocused(hwnd);
             return true;
@@ -388,8 +431,9 @@ bool ExtendedEditWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case WM_LBUTTONUP:
             if (delayFocus) {
                 DWORD sel = Edit_GetSel(hwnd);
-                if (LOWORD(sel) == HIWORD(sel))
-                    PostMessage(hwnd, UWM_DELAYED_SET_FOCUS, 0, 0);
+                if (LOWORD(sel) == HIWORD(sel)) {
+                    PostMessageW(hwnd, UWM_DELAYED_SET_FOCUS, 0, 0);
+                }
                 delayFocus = false;
             }
             return true;
@@ -398,8 +442,9 @@ bool ExtendedEditWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return false; // for easier debugging (make setting a breakpoint possible)
 
         case WM_SETFOCUS:
-            if (!delayFocus)
-                PostMessage(hwnd, UWM_DELAYED_SET_FOCUS, 0, 0);
+            if (!delayFocus) {
+                PostMessageW(hwnd, UWM_DELAYED_SET_FOCUS, 0, 0);
+            }
             return true;
 
         case UWM_DELAYED_SET_FOCUS:
@@ -407,13 +452,14 @@ bool ExtendedEditWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return true;
 
         case WM_KEYDOWN:
-            if (VK_BACK != wParam || !IsCtrlPressed() || IsShiftPressed())
+            if (VK_BACK != wp || !IsCtrlPressed() || IsShiftPressed()) {
                 return false;
-            PostMessage(hwnd, UWM_DELAYED_CTRL_BACK, 0, 0);
+            }
+            PostMessageW(hwnd, UWM_DELAYED_CTRL_BACK, 0, 0);
             return true;
 
         case UWM_DELAYED_CTRL_BACK: {
-            AutoFreeW text(win::GetText(hwnd));
+            AutoFreeWstr text(win::GetText(hwnd));
             int selStart = LOWORD(Edit_GetSel(hwnd)), selEnd = selStart;
             // remove the rectangle produced by Ctrl+Backspace
             if (selStart > 0 && text[selStart - 1] == '\x7F') {
@@ -422,12 +468,14 @@ bool ExtendedEditWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 selStart = selEnd = selStart - 1;
             }
             // remove the previous word (and any spacing after it)
-            for (; selStart > 0 && str::IsWs(text[selStart - 1]); selStart--)
+            for (; selStart > 0 && str::IsWs(text[selStart - 1]); selStart--) {
                 ;
-            for (; selStart > 0 && !str::IsWs(text[selStart - 1]); selStart--)
+            }
+            for (; selStart > 0 && !str::IsWs(text[selStart - 1]); selStart--) {
                 ;
+            }
             Edit_SetSel(hwnd, selStart, selEnd);
-            SendMessage(hwnd, WM_CLEAR, 0, 0);
+            SendMessageW(hwnd, WM_CLEAR, 0, 0);
         }
             return true;
 
@@ -442,30 +490,33 @@ bool ExtendedEditWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 #define MIN_WIN_DX 50
 #define MIN_WIN_DY 50
 
-void EnsureAreaVisibility(RectI& r) {
+void EnsureAreaVisibility(Rect& r) {
     // adjust to the work-area of the current monitor (not necessarily the primary one)
-    RectI work = GetWorkAreaRect(r);
+    Rect work = GetWorkAreaRect(r);
 
     // make sure that the window is neither too small nor bigger than the monitor
-    if (r.dx < MIN_WIN_DX || r.dx > work.dx)
+    if (r.dx < MIN_WIN_DX || r.dx > work.dx) {
         r.dx = std::min((int)((double)work.dy * DEF_PAGE_RATIO), work.dx);
-    if (r.dy < MIN_WIN_DY || r.dy > work.dy)
+    }
+    if (r.dy < MIN_WIN_DY || r.dy > work.dy) {
         r.dy = work.dy;
+    }
 
     // check whether the lower half of the window's title bar is
     // inside a visible working area
     int captionDy = GetSystemMetrics(SM_CYCAPTION);
-    RectI halfCaption(r.x, r.y + captionDy / 2, r.dx, captionDy / 2);
-    if (halfCaption.Intersect(work).IsEmpty())
-        r = RectI(work.TL(), r.Size());
+    Rect halfCaption(r.x, r.y + captionDy / 2, r.dx, captionDy / 2);
+    if (halfCaption.Intersect(work).IsEmpty()) {
+        r = Rect(work.TL(), r.Size());
+    }
 }
 
-RectI GetDefaultWindowPos() {
+Rect GetDefaultWindowPos() {
     RECT workArea;
     SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
-    RectI work = RectI::FromRECT(workArea);
+    Rect work = Rect::FromRECT(workArea);
 
-    RectI r = work;
+    Rect r = work;
     r.dx = std::min((int)((double)r.dy * DEF_PAGE_RATIO), work.dx);
     r.x = (work.dx - r.dx) / 2;
 
@@ -473,17 +524,19 @@ RectI GetDefaultWindowPos() {
 }
 
 void SaveCallstackLogs() {
-    char* s = dbghelp::GetCallstacks();
-    if (!s)
+    AutoFree s = dbghelp::GetCallstacks();
+    if (s.empty()) {
         return;
-    AutoFreeW filePath(AppGenDataFilename(L"callstacks.txt"));
-    file::WriteFile(filePath.Get(), s, str::Len(s));
-    free(s);
+    }
+    AutoFreeWstr filePath(AppGenDataFilename(L"callstacks.txt"));
+    file::WriteFile(filePath.Get(), s.AsSpan());
 }
 
+// TODO: this can be used for extracting other data
+#if 0
 // cache because calculating md5 of the whole executable
 // might be relatively expensive
-static AutoFreeW gAppMd5;
+static AutoFreeWstr gAppMd5;
 
 // return hex version of md5 of app's executable
 // nullptr if there was an error
@@ -493,59 +546,49 @@ static const WCHAR* Md5OfAppExe() {
         return str::Dup(gAppMd5.Get());
     }
 
-    const WCHAR* appPath = GetExePath();
-    if (appPath == nullptr) {
+    AutoFreeWstr appPath = GetExePath();
+    if (appPath.empty()) {
         return {};
     }
-    defer { str::Free(appPath); };
-    auto d = file::ReadFile(appPath);
-    if (d.IsEmpty()) {
+    AutoFree d = file::ReadFile(appPath.data);
+    if (d.empty()) {
         return nullptr;
     }
 
-    unsigned char md5[16] = {0};
-    CalcMD5DigestWin(d.data, d.size, md5);
+    u8 md5[16] = {0};
+    CalcMD5DigestWin(d.data, d.size(), md5);
 
     AutoFree md5HexA(_MemToHex(&md5));
-    AutoFreeW md5Hex(str::conv::FromUtf8(md5HexA));
+    AutoFreeWstr md5Hex = strconv::Utf8ToWchar(md5HexA.AsView());
 
     return md5Hex.StealData();
 }
-
-#ifdef _WIN64
-static const WCHAR* unrarFileName = L"unrar64.dll";
-#else
-static const WCHAR* unrarFileName = L"unrar.dll";
-#endif
 
 // remove all directories except for ours
 //. need to avoid acuumulating the directories when testing
 // locally or using pre-release builds (both cases where
 // exe and its md5 changes frequently)
 void RemoveMd5AppDataDirectories() {
-    const WCHAR* extractedDir = PathForFileInAppDataDir(L"extracted");
-    if (!extractedDir) {
+    AutoFreeWstr extractedDir = PathForFileInAppDataDir(L"extracted");
+    if (extractedDir.empty()) {
         return;
     }
-    defer { str::Free(extractedDir); };
 
-    auto dirs = CollectDirsFromDirectory(extractedDir);
+    auto dirs = CollectDirsFromDirectory(extractedDir.data);
     if (dirs.empty()) {
         return;
     }
 
-    const WCHAR* md5App = Md5OfAppExe();
-    if (md5App == nullptr) {
+    AutoFreeWstr md5App = Md5OfAppExe();
+    if (md5App.empty()) {
         return;
     }
-    defer { str::Free(md5App); };
 
-    const WCHAR* md5Dir = path::Join(extractedDir, md5App);
-    defer { str::Free(md5Dir); };
+    AutoFreeWstr md5Dir = path::Join(extractedDir.data, md5App.data);
 
     for (auto& dir : dirs) {
         const WCHAR* s = dir.data();
-        if (str::Eq(s, md5Dir)) {
+        if (str::Eq(s, md5Dir.data)) {
             continue;
         }
         dir::RemoveAll(s);
@@ -557,38 +600,33 @@ void RemoveMd5AppDataDirectories() {
 const WCHAR* ExractUnrarDll() {
     RemoveMd5AppDataDirectories();
 
-    const WCHAR* extractedDir = PathForFileInAppDataDir(L"extracted");
-    if (!extractedDir) {
+    AutoFreeWstr extractedDir = PathForFileInAppDataDir(L"extracted");
+    if (extractedDir.empty()) {
         return nullptr;
     }
-    defer { str::Free(extractedDir); };
 
-    const WCHAR* md5App = Md5OfAppExe();
-    if (md5App == nullptr) {
+    AutoFreeWstr md5App = Md5OfAppExe();
+    if (md5App.empty()) {
         return nullptr;
     }
-    defer { str::Free(md5App); };
 
-    const WCHAR* md5Dir = path::Join(extractedDir, md5App);
-    defer { str::Free(md5Dir); };
+    AutoFreeWstr md5Dir = path::Join(extractedDir.data, md5App.data);
+    AutoFreeWstr dllPath = path::Join(md5Dir.data, unrarFileName);
 
-    const WCHAR* dllPath = path::Join(md5Dir, unrarFileName);
-    defer { str::Free(dllPath); };
-
-    if (file::Exists(dllPath)) {
-        const WCHAR* ret = dllPath;
+    if (file::Exists(dllPath.data)) {
+        const WCHAR* ret = dllPath.data;
         dllPath = nullptr; // don't free
         return ret;
     }
 
-    bool ok = dir::CreateAll(md5Dir);
+    bool ok = dir::CreateAll(md5Dir.data);
     if (!ok) {
         return nullptr;
     }
 
     HGLOBAL res = 0;
     auto h = GetModuleHandle(nullptr);
-    auto resName = MAKEINTRESOURCEW(1);
+    WCHAR* resName = MAKEINTRESOURCEW(1);
     HRSRC resSrc = FindResourceW(h, resName, RT_RCDATA);
     if (!resSrc) {
         return nullptr;
@@ -598,7 +636,9 @@ const WCHAR* ExractUnrarDll() {
         return nullptr;
     }
     const char* data = (const char*)LockResource(res);
-    defer { UnlockResource(res); };
+    defer {
+        UnlockResource(res);
+    };
     DWORD dataSize = SizeofResource(nullptr, resSrc);
     ok = file::WriteFile(dllPath, data, dataSize);
     if (!ok) {
@@ -609,3 +649,4 @@ const WCHAR* ExractUnrarDll() {
     dllPath = nullptr; // don't free
     return ret;
 }
+#endif

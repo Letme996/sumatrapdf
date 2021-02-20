@@ -16,8 +16,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\AppUtil.h" />
-    <ClInclude Include="..\src\ParseCommandLine.h" />
+    <ClInclude Include="..\src\DisplayMode.h" />
+    <ClInclude Include="..\src\Flags.h" />
     <ClInclude Include="..\src\SettingsStructs.h" />
+    <ClInclude Include="..\src\SumatraConfig.h" />
     <ClInclude Include="..\src\mui\SvgPath.h">
       <Filter>mui</Filter>
     </ClInclude>
@@ -33,16 +35,19 @@
     <ClInclude Include="..\src\utils\CmdLineParser.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\ColorUtil.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\CryptoUtil.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\CssParser.h">
       <Filter>utils</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\utils\DebugLog.h">
+    <ClInclude Include="..\src\utils\Dict.h">
       <Filter>utils</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\utils\Dict.h">
+    <ClInclude Include="..\src\utils\Dpi.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\FileUtil.h">
@@ -63,13 +68,13 @@
     <ClInclude Include="..\src\utils\JsonParser.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\Log.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\Scoped.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\SettingsUtil.h">
-      <Filter>utils</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\utils\SimpleLog.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\SquareTreeParser.h">
@@ -79,6 +84,12 @@
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\StrUtil.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\StrconvUtil.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\StringViewUtil.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\TrivialHtmlParser.h">
@@ -99,8 +110,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\AppUtil.cpp" />
-    <ClCompile Include="..\src\ParseCommandLine.cpp" />
-    <ClCompile Include="..\src\SettingsStructs.cpp" />
+    <ClCompile Include="..\src\DisplayMode.cpp" />
+    <ClCompile Include="..\src\Flags.cpp" />
+    <ClCompile Include="..\src\SumatraConfig.cpp" />
     <ClCompile Include="..\src\UnitTests.cpp" />
     <ClCompile Include="..\src\mui\SvgPath.cpp">
       <Filter>mui</Filter>
@@ -120,19 +132,25 @@
     <ClCompile Include="..\src\utils\CmdLineParser.cpp">
       <Filter>utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\utils\ColorUtil.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\utils\CryptoUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\CssParser.cpp">
       <Filter>utils</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\utils\DebugLog.cpp">
-      <Filter>utils</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\utils\Dict.cpp">
       <Filter>utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\utils\Dpi.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\utils\FileUtil.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\GeomUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\HtmlParserLookup.cpp">
@@ -145,6 +163,9 @@
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\JsonParser.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\Log.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\SettingsUtil.cpp">
@@ -160,6 +181,12 @@
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\StrUtil_win.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\StrconvUtil.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\StringViewUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\TrivialHtmlParser.cpp">

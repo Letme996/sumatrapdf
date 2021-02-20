@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 /*
@@ -14,10 +14,9 @@ It can be changed by build script before invoking msbuild.
 
 Defines we recognize:
 
-#define SVN_PRE_RELEASE_VER 10175
+#define PRE_RELEASE_VER 10175
 #define VER_QUALIFIER x64
 #define GIT_COMMIT_ID 70cdc024f79167b607f59b77ea0b29dd155925cc
-
 
 Defines that can be over-written, but shouldn't:
 

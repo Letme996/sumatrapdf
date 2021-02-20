@@ -1,19 +1,25 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 namespace path {
 
 bool IsSep(char c);
 
-const char* GetBaseName(const char* path);
-const char* GetExt(const char* path);
+std::string_view GetBaseName(std::string_view path);
+
+const char* GetBaseNameNoFree(const char* path);
+const char* GetExtNoFree(const char* path);
 
 char* JoinUtf(const char* path, const char* fileName, Allocator* allocator);
 
+std::string_view GetDir(std::string_view path);
+bool IsDirectory(std::string_view);
+bool IsDirectory(std::wstring_view);
+
 #if OS_WIN
 bool IsSep(WCHAR c);
-const WCHAR* GetBaseName(const WCHAR* path);
-const WCHAR* GetExt(const WCHAR* path);
+const WCHAR* GetBaseNameNoFree(const WCHAR* path);
+const WCHAR* GetExtNoFree(const WCHAR* path);
 
 WCHAR* Normalize(const WCHAR* path);
 WCHAR* ShortPath(const WCHAR* path);
@@ -24,7 +30,7 @@ bool Match(const WCHAR* path, const WCHAR* filter);
 bool IsAbsolute(const WCHAR* path);
 
 WCHAR* GetDir(const WCHAR* path);
-WCHAR* Join(const WCHAR* path, const WCHAR* fileName);
+WCHAR* Join(const WCHAR* path, const WCHAR* fileName, const WCHAR* fileName2 = nullptr);
 
 WCHAR* GetTempPath(const WCHAR* filePrefix = nullptr);
 WCHAR* GetPathOfFileInAppDir(const WCHAR* fileName = nullptr);
@@ -34,25 +40,32 @@ WCHAR* GetPathOfFileInAppDir(const WCHAR* fileName = nullptr);
 namespace file {
 
 FILE* OpenFILE(const char* path);
-char* ReadFileWithAllocator(const char* path, size_t* fileSizeOut, Allocator* allocator);
-bool WriteFile(const char* path, const void* data, size_t dataLen);
-OwnedData ReadFile(const char* path);
+std::span<u8> ReadFileWithAllocator(const char* path, Allocator*);
+bool WriteFile(const char* path, std::span<u8>);
+
+std::span<u8> ReadFile(std::string_view path);
+
+bool Exists(std::string_view path);
 
 #if OS_WIN
 FILE* OpenFILE(const WCHAR* path);
 bool Exists(const WCHAR* path);
-char* ReadFileWithAllocator(const WCHAR* path, size_t* fileSizeOut, Allocator* allocator);
-OwnedData ReadFile(const WCHAR* path);
-bool ReadN(const WCHAR* path, char* buf, size_t toRead);
-bool WriteFile(const WCHAR* path, const void* data, size_t dataLen);
-int64_t GetSize(const WCHAR* path);
+std::span<u8> ReadFileWithAllocator(const WCHAR* filePath, Allocator* allocator);
+std::span<u8> ReadFile(const WCHAR* filePath);
+
+i64 GetSize(std::string_view path);
+
+int ReadN(const WCHAR* path, char* buf, size_t toRead);
+bool WriteFile(const WCHAR* path, std::span<u8>);
 bool Delete(const WCHAR* path);
 FILETIME GetModificationTime(const WCHAR* path);
 bool SetModificationTime(const WCHAR* path, FILETIME lastMod);
 bool StartsWithN(const WCHAR* path, const char* magicNumber, size_t len);
 bool StartsWith(const WCHAR* path, const char* magicNumber);
+
 int GetZoneIdentifier(const WCHAR* path);
 bool SetZoneIdentifier(const WCHAR* path, int zoneId = URLZONE_INTERNET);
+bool DeleteZoneIdentifier(const WCHAR* path);
 
 HANDLE OpenReadOnly(const WCHAR* path);
 #endif
@@ -69,9 +82,5 @@ bool RemoveAll(const WCHAR* dir);
 } // namespace dir
 
 #if OS_WIN
-inline bool FileTimeEq(const FILETIME& a, const FILETIME& b) {
-    return a.dwLowDateTime == b.dwLowDateTime && a.dwHighDateTime == b.dwHighDateTime;
-}
-
-HINSTANCE GetInstance();
+bool FileTimeEq(const FILETIME& a, const FILETIME& b);
 #endif

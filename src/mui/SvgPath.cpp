@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 /*
@@ -29,6 +29,50 @@ understand.
 #include "SvgPath.h"
 #include "utils/VecSegmented.h"
 
+// using namespace Gdiplus;
+
+using Gdiplus::ARGB;
+using Gdiplus::Bitmap;
+using Gdiplus::Brush;
+using Gdiplus::Color;
+using Gdiplus::CombineModeReplace;
+using Gdiplus::CompositingQualityHighQuality;
+using Gdiplus::Font;
+using Gdiplus::FontFamily;
+using Gdiplus::FontStyle;
+using Gdiplus::FontStyleBold;
+using Gdiplus::FontStyleItalic;
+using Gdiplus::FontStyleRegular;
+using Gdiplus::FontStyleStrikeout;
+using Gdiplus::FontStyleUnderline;
+using Gdiplus::FrameDimensionPage;
+using Gdiplus::FrameDimensionTime;
+using Gdiplus::Graphics;
+using Gdiplus::GraphicsPath;
+using Gdiplus::Image;
+using Gdiplus::ImageAttributes;
+using Gdiplus::InterpolationModeHighQualityBicubic;
+using Gdiplus::LinearGradientBrush;
+using Gdiplus::LinearGradientMode;
+using Gdiplus::LinearGradientModeVertical;
+using Gdiplus::Matrix;
+using Gdiplus::MatrixOrderAppend;
+using Gdiplus::Ok;
+using Gdiplus::OutOfMemory;
+using Gdiplus::Pen;
+using Gdiplus::PenAlignmentInset;
+using Gdiplus::PropertyItem;
+using Gdiplus::Region;
+using Gdiplus::SmoothingModeAntiAlias;
+using Gdiplus::SolidBrush;
+using Gdiplus::Status;
+using Gdiplus::StringAlignmentCenter;
+using Gdiplus::StringFormat;
+using Gdiplus::StringFormatFlagsDirectionRightToLeft;
+using Gdiplus::TextRenderingHintClearTypeGridFit;
+using Gdiplus::UnitPixel;
+using Gdiplus::Win32Error;
+
 namespace svg {
 
 enum class PathInstr {
@@ -57,24 +101,27 @@ enum class PathInstr {
 };
 
 // the order must match order of PathInstr enums
-static char* instructions = "MmLlHhVvCcSsQqTtAaZz";
+static const char* svgInstructions = "MmLlHhVvCcSsQqTtAaZz";
 
 struct SvgPathInstr {
-    SvgPathInstr(PathInstr type) : type(type) {}
+    SvgPathInstr(PathInstr type) {
+        this->type = type;
+    }
 
     PathInstr type;
     // the meaning of values depends on InstrType. We could be more safe
     // by giving them symbolic names but this gives us simpler parsing
-    float v[6];
-    bool largeArc, sweep;
+    float v[6]{};
+    bool largeArc = false;
+    bool sweep = false;
 };
 
 static PathInstr GetInstructionType(char c) {
-    const char* pos = str::FindChar(instructions, c);
+    const char* pos = str::FindChar(svgInstructions, c);
     if (!pos) {
         return PathInstr::Unknown;
     }
-    return (PathInstr)(pos - instructions);
+    return (PathInstr)(pos - svgInstructions);
 }
 
 static const char* skipWs(const char* s) {
@@ -140,7 +187,7 @@ static bool ParseSvgPathData(const char* s, VecSegmented<SvgPathInstr>& instr) {
         if (!s) {
             return false;
         }
-        instr.push_back(i);
+        instr.Append(i);
 
         s = skipWs(s);
     }
@@ -148,16 +195,16 @@ static bool ParseSvgPathData(const char* s, VecSegmented<SvgPathInstr>& instr) {
     return true;
 }
 
-static void RelPointToAbs(const PointF& lastEnd, float* xy) {
+static void RelPointToAbs(const Gdiplus::PointF& lastEnd, float* xy) {
     xy[0] = lastEnd.X + xy[0];
     xy[1] = lastEnd.Y + xy[1];
 }
 
-static void RelXToAbs(const PointF& lastEnd, float* x) {
+static void RelXToAbs(const Gdiplus::PointF& lastEnd, float* x) {
     *x = lastEnd.X + *x;
 }
 
-static void RelYToAbs(const PointF& lastEnd, float* y) {
+static void RelYToAbs(const Gdiplus::PointF& lastEnd, float* y) {
     *y = lastEnd.Y + *y;
 }
 
@@ -167,43 +214,43 @@ GraphicsPath* GraphicsPathFromPathData(const char* s) {
         return nullptr;
     }
     GraphicsPath* gp = ::new GraphicsPath();
-    PointF prevEnd(0.f, 0.f);
-    for (SvgPathInstr& i : instr) {
-        PathInstr type = i.type;
+    Gdiplus::PointF prevEnd(0.f, 0.f);
+    for (SvgPathInstr* i : instr) {
+        PathInstr type = i->type;
 
         // convert relative coordinates to absolute based on end position of
         // previous element
         // TODO: support the rest of instructions
         if (PathInstr::MoveRel == type) {
-            RelPointToAbs(prevEnd, i.v);
+            RelPointToAbs(prevEnd, i->v);
             type = PathInstr::MoveAbs;
         } else if (PathInstr::LineToRel == type) {
-            RelPointToAbs(prevEnd, i.v);
+            RelPointToAbs(prevEnd, i->v);
             type = PathInstr::LineToAbs;
         } else if (PathInstr::HLineRel == type) {
-            RelXToAbs(prevEnd, i.v);
+            RelXToAbs(prevEnd, i->v);
             type = PathInstr::HLineAbs;
         } else if (PathInstr::VLineRel == type) {
-            RelYToAbs(prevEnd, i.v);
+            RelYToAbs(prevEnd, i->v);
             type = PathInstr::VLineAbs;
         }
 
         if (PathInstr::MoveAbs == type) {
-            PointF p(i.v[0], i.v[1]);
+            Gdiplus::PointF p(i->v[0], i->v[1]);
             prevEnd = p;
             gp->StartFigure();
         } else if (PathInstr::LineToAbs == type) {
-            PointF p(i.v[0], i.v[1]);
+            Gdiplus::PointF p(i->v[0], i->v[1]);
             gp->AddLine(prevEnd, p);
             prevEnd = p;
         } else if (PathInstr::HLineAbs == type) {
-            PointF p(prevEnd);
-            p.X = i.v[0];
+            Gdiplus::PointF p(prevEnd);
+            p.X = i->v[0];
             gp->AddLine(prevEnd, p);
             prevEnd = p;
         } else if (PathInstr::VLineAbs == type) {
-            PointF p(prevEnd);
-            p.Y = i.v[0];
+            Gdiplus::PointF p(prevEnd);
+            p.Y = i->v[0];
             gp->AddLine(prevEnd, p);
             prevEnd = p;
         } else if ((PathInstr::Close == type) || (PathInstr::Close2 == type)) {

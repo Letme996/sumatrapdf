@@ -1,22 +1,30 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 class SquareTreeNode {
   public:
-    SquareTreeNode() {}
+    SquareTreeNode() {
+    }
     ~SquareTreeNode();
 
     struct DataItem {
-        const char* key;
+        const char* key = nullptr;
         union {
             const char* str;
             SquareTreeNode* child;
         } value;
-        bool isChild;
+        bool isChild = false;
 
-        DataItem() : key(nullptr) {}
-        DataItem(const char* key, const char* string) : key(key), isChild(false) { value.str = string; }
-        DataItem(const char* key, SquareTreeNode* node) : key(key), isChild(true) { value.child = node; }
+        DataItem() = default;
+        DataItem(const char* k, const char* string) {
+            key = k;
+            value.str = string;
+        }
+        DataItem(const char* k, SquareTreeNode* node) {
+            key = k;
+            isChild = true;
+            value.child = node;
+        }
     };
     Vec<DataItem> data;
 
@@ -29,7 +37,9 @@ class SquareTree {
 
   public:
     explicit SquareTree(const char* data);
-    ~SquareTree() { delete root; }
+    ~SquareTree() {
+        delete root;
+    }
 
     SquareTreeNode* root;
 };

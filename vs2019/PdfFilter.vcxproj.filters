@@ -9,7 +9,12 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\Annotation.h" />
     <ClInclude Include="..\src\EbookDoc.h" />
+    <ClInclude Include="..\src\EngineBase.h" />
+    <ClInclude Include="..\src\EngineFzUtil.h" />
+    <ClInclude Include="..\src\EnginePdf.h" />
+    <ClInclude Include="..\src\EngineXps.h" />
     <ClInclude Include="..\src\MobiDoc.h" />
     <ClInclude Include="..\src\ifilter\CEpubFilter.h">
       <Filter>ifilter</Filter>
@@ -26,15 +31,22 @@
     <ClInclude Include="..\src\ifilter\PdfFilter.h">
       <Filter>ifilter</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\LogDbg.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\PalmDbReader.h">
       <Filter>utils</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\Annotation.cpp" />
     <ClCompile Include="..\src\EbookDoc.cpp" />
+    <ClCompile Include="..\src\EngineBase.cpp" />
+    <ClCompile Include="..\src\EngineFzUtil.cpp" />
+    <ClCompile Include="..\src\EnginePdf.cpp" />
+    <ClCompile Include="..\src\EngineXps.cpp" />
     <ClCompile Include="..\src\MUPDF_Exports.cpp" />
     <ClCompile Include="..\src\MobiDoc.cpp" />
-    <ClCompile Include="..\src\PdfEngine.cpp" />
     <ClCompile Include="..\src\ifilter\CEpubFilter.cpp">
       <Filter>ifilter</Filter>
     </ClCompile>
@@ -46,6 +58,9 @@
     </ClCompile>
     <ClCompile Include="..\src\ifilter\PdfFilterDll.cpp">
       <Filter>ifilter</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\LogDbg.cpp">
+      <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\PalmDbReader.cpp">
       <Filter>utils</Filter>

@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 namespace dict {
@@ -18,8 +18,8 @@ enum { DEFAULT_HASH_TABLE_INITIAL_SIZE = 16 * 1024 };
 // note: StrToInt would be more natural name but it's re-#define'd in <shlwapi.h>
 class MapStrToInt {
   public:
-    PoolAllocator* allocator;
-    HashTable* h;
+    PoolAllocator allocator;
+    HashTable* h = nullptr;
 
     explicit MapStrToInt(size_t initialSize = DEFAULT_HASH_TABLE_INITIAL_SIZE);
     ~MapStrToInt();
@@ -34,8 +34,8 @@ class MapStrToInt {
 
 class MapWStrToInt {
   public:
-    PoolAllocator* allocator;
-    HashTable* h;
+    PoolAllocator allocator;
+    HashTable* h = nullptr;
 
     explicit MapWStrToInt(size_t initialSize = DEFAULT_HASH_TABLE_INITIAL_SIZE);
     ~MapWStrToInt();
@@ -56,11 +56,16 @@ class StringInterner {
     Vec<const char*> intToStr;
 
   public:
-    StringInterner() : nInternCalls(0) {}
+    StringInterner() {
+    }
 
     int Intern(const char* s, bool* alreadyPresent = nullptr);
-    size_t StringsCount() const { return intToStr.size(); }
-    const char* GetByIndex(size_t n) const { return intToStr.at(n); }
+    size_t StringsCount() const {
+        return intToStr.size();
+    }
+    const char* GetByIndex(size_t n) const {
+        return intToStr.at(n);
+    }
 
-    int nInternCalls; // so we know how effective interning is
+    int nInternCalls{0}; // so we know how effective interning is
 };

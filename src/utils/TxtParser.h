@@ -1,29 +1,30 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #define SERIALIZE_ESCAPE_CHAR '$'
 
 struct TxtNode {
     enum class Type {
+        Unknown,
         Struct,
         Array,
         Text,
     };
 
-    Type type;
+    Type type{Type::Unknown};
 
     // for storing children, first goes into firstChild and the
     // rest are linked as sibling
-    TxtNode* firstChild;
-    TxtNode* sibling;
+    TxtNode* firstChild{nullptr};
+    TxtNode* sibling{nullptr};
 
-    char* lineStart;
-    char* valStart;
-    char* valEnd;
-    char* keyStart;
-    char* keyEnd;
+    char* lineStart{nullptr};
+    char* valStart{nullptr};
+    char* valEnd{nullptr};
+    char* keyStart{nullptr};
+    char* keyEnd{nullptr};
 
-    explicit TxtNode(TxtNode::Type tp) { type = tp; }
+    explicit TxtNode(TxtNode::Type tp);
     TxtNode(const TxtNode& other) = delete;
     TxtNode& operator=(const TxtNode& other) = delete;
 
@@ -51,27 +52,27 @@ struct Token {
         String,      // foo
     };
 
-    Type type = Type::Finished;
+    Type type{Type::Finished};
 
     // TokenString, TokenKeyVal
-    char* lineStart = nullptr;
-    char* valStart = nullptr;
-    char* valEnd = nullptr;
+    char* lineStart{nullptr};
+    char* valStart{nullptr};
+    char* valEnd{nullptr};
 
     // TokenKeyVal
-    char* keyStart = nullptr;
-    char* keyEnd = nullptr;
+    char* keyStart{nullptr};
+    char* keyEnd{nullptr};
 };
 
 struct TxtParser {
     PoolAllocator allocator;
-    OwnedData data;
+    AutoFree data;
 
     str::Slice toParse;
     Token tok;
-    char escapeChar = SERIALIZE_ESCAPE_CHAR;
-    bool failed = false;
-    std::vector<TxtNode*> nodes;
+    char escapeChar{SERIALIZE_ESCAPE_CHAR};
+    bool failed{false};
+    Vec<TxtNode*> nodes;
 
     TxtNode* AllocTxtNode(TxtNode::Type);
     TxtNode* AllocTxtNodeFromToken(const Token&, TxtNode::Type);
@@ -80,4 +81,4 @@ struct TxtParser {
 };
 
 bool ParseTxt(TxtParser& parser);
-OwnedData PrettyPrintTxt(const TxtParser& parser);
+str::Str PrettyPrintTxt(const TxtParser& parser);

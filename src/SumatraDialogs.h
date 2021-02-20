@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
 struct GlobalPrefs;
@@ -12,7 +12,7 @@ INT_PTR Dialog_NewVersionAvailable(HWND hwnd, const WCHAR* currentVersion, const
                                    bool* skipThisVersion);
 bool Dialog_CustomZoom(HWND hwnd, bool forChm, float* currZoomInOut);
 INT_PTR Dialog_Settings(HWND hwnd, GlobalPrefs* prefs);
-bool Dialog_AddFavorite(HWND hwnd, const WCHAR* pageNo, AutoFreeW& favName);
+bool Dialog_AddFavorite(HWND hwnd, const WCHAR* pageNo, AutoFreeWstr& favName);
 
 enum class PrintRangeAdv { All = 0, Even, Odd };
 enum class PrintScaleAdv { None = 0, Shrink, Fit };
@@ -25,7 +25,8 @@ struct Print_Advanced_Data {
 
     explicit Print_Advanced_Data(PrintRangeAdv range = PrintRangeAdv::All, PrintScaleAdv scale = PrintScaleAdv::Shrink,
                                  PrintRotationAdv rotation = PrintRotationAdv::Auto)
-        : range(range), scale(scale), rotation(rotation) {}
+        : range(range), scale(scale), rotation(rotation) {
+    }
 };
 
 HPROPSHEETPAGE CreatePrintAdvancedPropSheet(Print_Advanced_Data* data, ScopedMem<DLGTEMPLATE>& dlgTemplate);

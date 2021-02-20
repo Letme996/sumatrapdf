@@ -8,16 +8,19 @@
 
 /* Outline */
 
-/*
+/**
 	fz_outline is a tree of the outline of a document (also known
 	as table of contents).
 
 	title: Title of outline item using UTF-8 encoding. May be NULL
 	if the outline item has no text string.
 
-	dest: Destination in the document to be displayed when this
-	outline item is activated. May be FZ_LINK_NONE if the outline
-	item does not have a destination.
+	uri: Destination in the document to be displayed when this
+	outline item is activated. May be an internal or external
+	link, or NULL if the outline item does not have a destination.
+
+	page: The page number of an internal link, or -1 for external
+	links or links with no destination.
 
 	next: The next outline item at the same level as this outline
 	item. May be NULL if no more outline items exist at this level.
@@ -25,43 +28,46 @@
 	down: The outline items immediate children in the hierarchy.
 	May be NULL if no children exist.
 */
-
-typedef struct fz_outline_s fz_outline;
-
-struct fz_outline_s
+typedef struct fz_outline
 {
+	int refs;
 	char *title;
-	fz_link_dest dest;
-	fz_outline *next;
-	fz_outline *down;
-	int is_open; /* SumatraPDF: support expansion states */
-};
+	char *uri;
+	int page;
+	float x, y;
+	struct fz_outline *next;
+	struct fz_outline *down;
+	int is_open;
 
-/*
-	fz_print_outline_xml: Dump the given outlines as (pseudo) XML.
+	/* sumatrapdf: support color and flags */
+	int flags;
+	int n_color;
+	float color[4];
+} fz_outline;
 
-	out: The file handle to output to.
-
-	outline: The outlines to output.
+/**
+	Create a new outline entry with zeroed fields for the caller
+	to fill in.
 */
-void fz_print_outline_xml(fz_context *ctx, fz_output *out, fz_outline *outline);
+fz_outline *fz_new_outline(fz_context *ctx);
 
-/*
-	fz_print_outline: Dump the given outlines to as text.
+/**
+	Increment the reference count. Returns the same pointer.
 
-	out: The file handle to output to.
-
-	outline: The outlines to output.
+	Never throws exceptions.
 */
-void fz_print_outline(fz_context *ctx, fz_output *out, fz_outline *outline);
+fz_outline *fz_keep_outline(fz_context *ctx, fz_outline *outline);
 
-/*
-	fz_free_outline: Free hierarchical outline.
+/**
+	Decrements the reference count. When the reference point
+	reaches zero, the outline is freed.
 
-	Free an outline obtained from fz_load_outline.
+	When freed, it will drop linked	outline entries (next and down)
+	too, thus a whole outline structure can be dropped by dropping
+	the top entry.
 
-	Does not throw exceptions.
+	Never throws exceptions.
 */
-void fz_free_outline(fz_context *ctx, fz_outline *outline);
+void fz_drop_outline(fz_context *ctx, fz_outline *outline);
 
 #endif

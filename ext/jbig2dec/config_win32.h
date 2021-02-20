@@ -1,4 +1,4 @@
-/* Copyright (C) 2001-2019 Artifex Software, Inc.
+/* Copyright (C) 2001-2020 Artifex Software, Inc.
    All Rights Reserved.
 
    This software is provided AS-IS with no warranty, either express or
@@ -41,6 +41,15 @@ typedef unsigned __int64 uint64_t;
 /* VS 2008 and later have vsnprintf */
 # if _MSC_VER < 1500
 #  define vsnprintf _vsnprintf
+/* Previously we defined inline as nothing for 2005 and below */
+#  define inline
+#else
+/* VS 2008 has __inline but not inline, later versiosn (unknown exactly where) define inline
+ * so cater for it being defined already.
+ */
+# if !(defined(inline))
+#  define inline __inline
+# endif
 # endif
 
 /* VS 2014 and later have (finally) snprintf */

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"fmt"
 	"io/ioutil"
@@ -9,40 +10,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/kjk/u"
 )
 
-func must(err error) {
-	u.Must(err)
-}
-
-func logf(format string, args ...interface{}) {
-	u.Logf(format, args...)
-}
-
-func fatalf(format string, args ...interface{}) {
-	s := fmt.Sprintf(format, args...)
-	panic(s)
-}
-
-func pj(elem ...string) string {
-	return filepath.Join(elem...)
-}
-func fatalIf(cond bool, format string, args ...interface{}) {
-	if !cond {
-		return
-	}
-	s := fmt.Sprintf(format, args...)
-	panic(s)
-}
-
-func fatalIfErr(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
+var (
+	must       = u.Must
+	logf       = u.Logf
+	fatalIf    = u.PanicIf
+	panicIf    = u.PanicIf
+	panicIfErr = u.PanicIfErr
+)
 
 func absPathMust(path string) string {
 	res, err := filepath.Abs(path)
@@ -52,7 +32,7 @@ func absPathMust(path string) string {
 
 func runExeMust(c string, args ...string) []byte {
 	cmd := exec.Command(c, args...)
-	fmt.Printf("> %s\n", cmd)
+	logf("> %s\n", cmd)
 	out, err := cmd.CombinedOutput()
 	must(err)
 	return []byte(out)
@@ -101,9 +81,14 @@ func fileSizeMust(path string) int64 {
 	return size
 }
 
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func removeDirMust(dir string) {
 	err := os.RemoveAll(dir)
-	fatalIfErr(err)
+	panicIfErr(err)
 }
 
 func removeFileMust(path string) {
@@ -111,7 +96,7 @@ func removeFileMust(path string) {
 		return
 	}
 	err := os.Remove(path)
-	fatalIfErr(err)
+	panicIfErr(err)
 }
 
 func listExeFiles(dir string) {
@@ -205,24 +190,101 @@ func fileSha1Hex(path string) (string, error) {
 
 func httpDlMust(uri string) []byte {
 	res, err := http.Get(uri)
-	fatalIfErr(err)
+	panicIfErr(err)
 	d, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
-	fatalIfErr(err)
+	panicIfErr(err)
 	return d
 }
 
 func httpDlToFileMust(uri string, path string, sha1Hex string) {
 	if u.FileExists(path) {
 		sha1File, err := fileSha1Hex(path)
-		fatalIfErr(err)
+		panicIfErr(err)
 		fatalIf(sha1File != sha1Hex, "file '%s' exists but has sha1 of %s and we expected %s", path, sha1File, sha1Hex)
 		return
 	}
-	fmt.Printf("Downloading '%s'\n", uri)
+	logf("Downloading '%s'\n", uri)
 	d := httpDlMust(uri)
 	sha1File := dataSha1Hex(d)
 	fatalIf(sha1File != sha1Hex, "downloaded '%s' but it has sha1 of %s and we expected %s", uri, sha1File, sha1Hex)
 	err := ioutil.WriteFile(path, d, 0755)
-	fatalIfErr(err)
+	panicIfErr(err)
+}
+
+func evalTmpl(s string, v interface{}) string {
+	tmpl, err := template.New("tmpl").Parse(s)
+	must(err)
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, v)
+	must(err)
+	return buf.String()
+}
+
+// whitelisted characters valid in url
+func validateRune(c rune) byte {
+	if c >= 'a' && c <= 'z' {
+		return byte(c)
+	}
+	if c >= 'A' && c <= 'Z' {
+		return byte(c)
+	}
+	if c >= '0' && c <= '9' {
+		return byte(c)
+	}
+	if c == '-' || c == '_' || c == '.' {
+		return byte(c)
+	}
+	if c == ' ' {
+		return '-'
+	}
+	return 0
+}
+
+func charCanRepeat(c byte) bool {
+	if c >= 'a' && c <= 'z' {
+		return true
+	}
+	if c >= 'A' && c <= 'Z' {
+		return true
+	}
+	if c >= '0' && c <= '9' {
+		return true
+	}
+	return false
+}
+
+// urlify generates safe url from tile by removing hazardous characters
+func urlify(title string) string {
+	s := strings.TrimSpace(title)
+	var res []byte
+	for _, r := range s {
+		c := validateRune(r)
+		if c == 0 {
+			continue
+		}
+		// eliminute duplicate consequitive characters
+		var prev byte
+		if len(res) > 0 {
+			prev = res[len(res)-1]
+		}
+		if c == prev && !charCanRepeat(c) {
+			continue
+		}
+		res = append(res, c)
+	}
+	s = string(res)
+	if len(s) > 128 {
+		s = s[:128]
+	}
+	return s
+}
+
+func dumpEnv() {
+	env := os.Environ()
+	logf("\nEnv:\n")
+	for _, s := range env {
+		logf("env: %s\n", s)
+	}
+	logf("\n")
 }

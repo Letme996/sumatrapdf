@@ -1,38 +1,44 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 /* How to use:
 
 DirIter di(dir, recursive);
-for (const WCHAR *filePath = di.First(); filePath; filePath = di.Next()) {
-    // process filePath
+for (const WCHAR *path = di.First(); path; path = di.Next()) {
+    // process path
 }
 
 */
 class DirIter {
-    bool recursive;
+    bool recursive = false;
 
     WStrVec dirsToVisit;
-    AutoFreeW startDir;
-    AutoFreeW currDir;
-    AutoFreeW currPath;
-    HANDLE currFindHandle;
-    WIN32_FIND_DATA currFindData;
-    bool foundNext;
+    AutoFreeWstr startDir;
+    AutoFreeWstr currDir;
+    bool foundNext = false;
 
     bool StartDirIter(const WCHAR* dir);
     bool TryNextDir();
 
   public:
-    DirIter(const WCHAR* dir, bool recursive = false)
-        : foundNext(false), currFindHandle(nullptr), recursive(recursive) {
+    AutoFreeWstr currPath;
+    HANDLE currFindHandle = nullptr;
+    WIN32_FIND_DATAW currFindData{};
+
+    DirIter(const WCHAR* dir, bool recur = false) {
+        recursive = recur;
         startDir.SetCopy(dir);
     }
-    ~DirIter() { FindClose(currFindHandle); }
+    ~DirIter() {
+        FindClose(currFindHandle);
+    }
 
     const WCHAR* First();
     const WCHAR* Next();
 };
 
 bool CollectPathsFromDirectory(const WCHAR* pattern, WStrVec& paths, bool dirsInsteadOfFiles = false);
-std::vector<std::wstring> CollectDirsFromDirectory(const WCHAR*);
+// std::vector<std::wstring> CollectDirsFromDirectory(const WCHAR*);
+
+bool CollectFilesFromDirectory(std::string_view dir, VecStr& files,
+                               const std::function<bool(std::string_view path)>& fileMatches);

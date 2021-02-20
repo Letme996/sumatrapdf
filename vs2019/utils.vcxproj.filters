@@ -9,9 +9,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\utils\ApiHook.h">
-      <Filter>utils</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\utils\Archive.h">
       <Filter>utils</Filter>
     </ClInclude>
@@ -27,10 +24,16 @@
     <ClInclude Include="..\src\utils\ByteOrderDecoder.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\ByteReader.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\ByteWriter.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\CmdLineParser.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\ColorUtil.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\CryptoUtil.h">
@@ -40,9 +43,6 @@
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\DbgHelpDyn.h">
-      <Filter>utils</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\utils\DebugLog.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\Dict.h">
@@ -66,6 +66,12 @@
     <ClInclude Include="..\src\utils\GdiPlusUtil.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\GeomUtil.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\GuessFileType.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\HtmlParserLookup.h">
       <Filter>utils</Filter>
     </ClInclude>
@@ -84,10 +90,28 @@
     <ClInclude Include="..\src\utils\JsonParser.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\Log.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\LogDbg.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\LzmaSimpleArchive.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\MinHook.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\PEB.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\RegistryPaths.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\Scoped.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\ScopedWin.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="..\src\utils\SerializeTxt.h">
@@ -108,6 +132,12 @@
     <ClInclude Include="..\src\utils\StrUtil.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\StrconvUtil.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\StringViewUtil.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\TgaReader.h">
       <Filter>utils</Filter>
     </ClInclude>
@@ -123,6 +153,12 @@
     <ClInclude Include="..\src\utils\UITask.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\utils\Vec.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\utils\VecSegmented.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\utils\WebpReader.h">
       <Filter>utils</Filter>
     </ClInclude>
@@ -135,7 +171,16 @@
     <ClInclude Include="..\src\utils\ZipUtil.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\wingui\ButtonCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\CheckboxCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\wingui\DialogSizer.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\DropDownCtrl.h">
       <Filter>wingui</Filter>
     </ClInclude>
     <ClInclude Include="..\src\wingui\EditCtrl.h">
@@ -144,23 +189,50 @@
     <ClInclude Include="..\src\wingui\FrameRateWnd.h">
       <Filter>wingui</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\wingui\ImageCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\wingui\LabelWithCloseWnd.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\Layout.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\ListBoxCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\ProgressCtrl.h">
       <Filter>wingui</Filter>
     </ClInclude>
     <ClInclude Include="..\src\wingui\SplitterWnd.h">
       <Filter>wingui</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\wingui\StaticCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\TabsCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\TooltipCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\TrackbarCtrl.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\wingui\TreeCtrl.h">
       <Filter>wingui</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\wingui\Win32Window.h">
+    <ClInclude Include="..\src\wingui\TreeModel.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\WinGui.h">
+      <Filter>wingui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\wingui\Window.h">
       <Filter>wingui</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\utils\ApiHook.cpp">
-      <Filter>utils</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\utils\Archive.cpp">
       <Filter>utils</Filter>
     </ClCompile>
@@ -173,7 +245,16 @@
     <ClCompile Include="..\src\utils\ByteOrderDecoder.cpp">
       <Filter>utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\utils\ByteReader.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\ByteWriter.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\utils\CmdLineParser.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\ColorUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\CryptoUtil.cpp">
@@ -183,9 +264,6 @@
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\DbgHelpDyn.cpp">
-      <Filter>utils</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\utils\DebugLog.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\Dict.cpp">
@@ -209,6 +287,12 @@
     <ClCompile Include="..\src\utils\GdiPlusUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\utils\GeomUtil.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\GuessFileType.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\utils\HtmlParserLookup.cpp">
       <Filter>utils</Filter>
     </ClCompile>
@@ -227,7 +311,19 @@
     <ClCompile Include="..\src\utils\JsonParser.cpp">
       <Filter>utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\utils\Log.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\LogDbg.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\utils\LzmaSimpleArchive.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\MinHook.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\RegistryPaths.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\SerializeTxt.cpp">
@@ -249,6 +345,12 @@
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\StrUtil_win.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\StrconvUtil.cpp">
+      <Filter>utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\utils\StringViewUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
     <ClCompile Include="..\src\utils\TgaReader.cpp">
@@ -278,7 +380,16 @@
     <ClCompile Include="..\src\utils\ZipUtil.cpp">
       <Filter>utils</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\wingui\ButtonCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\CheckboxCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\wingui\DialogSizer.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\DropDownCtrl.cpp">
       <Filter>wingui</Filter>
     </ClCompile>
     <ClCompile Include="..\src\wingui\EditCtrl.cpp">
@@ -287,16 +398,46 @@
     <ClCompile Include="..\src\wingui\FrameRateWnd.cpp">
       <Filter>wingui</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\wingui\ImageCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\wingui\LabelWithCloseWnd.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\Layout.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\ListBoxCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\ProgressCtrl.cpp">
       <Filter>wingui</Filter>
     </ClCompile>
     <ClCompile Include="..\src\wingui\SplitterWnd.cpp">
       <Filter>wingui</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\wingui\StaticCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\TabsCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\TooltipCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\TrackbarCtrl.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\wingui\TreeCtrl.cpp">
       <Filter>wingui</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\wingui\Win32Window.cpp">
+    <ClCompile Include="..\src\wingui\TreeModel.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\WinGui.cpp">
+      <Filter>wingui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\wingui\Window.cpp">
       <Filter>wingui</Filter>
     </ClCompile>
   </ItemGroup>

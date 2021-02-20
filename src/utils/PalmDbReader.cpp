@@ -1,4 +1,4 @@
-/* Copyright 2018 the SumatraPDF project authors (see AUTHORS file).
+/* Copyright 2021 the SumatraPDF project authors (see AUTHORS file).
    License: Simplified BSD (see COPYING.BSD) */
 
 #include "BaseUtil.h"
@@ -11,12 +11,18 @@
 // size of PdbRecordHeader
 #define kPdbRecordHeaderLen 8
 
-bool PdbReader::Parse(OwnedData data) {
-    this->data = std::move(data);
+// Takes ownership of d
+bool PdbReader::Parse(std::span<u8> d) {
+    data = d.data();
+    dataSize = d.size();
     if (!ParseHeader()) {
         return false;
     }
     return true;
+}
+
+PdbReader::~PdbReader() {
+    str::Free(data);
 }
 
 static bool DecodePdbHeader(ByteOrderDecoder& dec, PdbHeader* hdr) {
@@ -43,7 +49,7 @@ static bool DecodePdbHeader(ByteOrderDecoder& dec, PdbHeader* hdr) {
 bool PdbReader::ParseHeader() {
     CrashIf(recInfos.size() > 0);
 
-    ByteOrderDecoder dec(data.data, data.size, ByteOrderDecoder::BigEndian);
+    ByteOrderDecoder dec(data, dataSize, ByteOrderDecoder::BigEndian);
     bool ok = DecodePdbHeader(dec, &hdr);
     if (!ok) {
         return false;
@@ -55,27 +61,27 @@ bool PdbReader::ParseHeader() {
 
     size_t nRecs = hdr.numRecords;
     size_t minOffset = kPdbHeaderLen + (nRecs * kPdbRecordHeaderLen);
-    size_t maxOffset = data.size;
+    size_t maxOffset = dataSize;
 
     for (size_t i = 0; i < nRecs; i++) {
         PdbRecordHeader recHdr;
         recHdr.offset = dec.UInt32();
         recHdr.flags = dec.UInt8();
         dec.Bytes(recHdr.uniqueID, dimof(recHdr.uniqueID));
-        uint32_t off = recHdr.offset;
+        u32 off = recHdr.offset;
         if ((off < minOffset) || (off > maxOffset)) {
             return false;
         }
-        recInfos.push_back(recHdr);
+        recInfos.Append(recHdr);
     }
     if (!dec.IsOk()) {
         return false;
     }
 
     // validate offsets
-    uint32_t prevOff = recInfos[0].offset;
+    u32 prevOff = recInfos[0].offset;
     for (size_t i = 1; i < nRecs - 1; i++) {
-        uint32_t off = recInfos[i].offset;
+        u32 off = recInfos[i].offset;
         if (prevOff > off) {
             return false;
         }
@@ -97,49 +103,66 @@ size_t PdbReader::GetRecordCount() {
 }
 
 // don't free, memory is owned by us
-std::string_view PdbReader::GetRecord(size_t recNo) {
+std::span<u8> PdbReader::GetRecord(size_t recNo) {
     size_t nRecs = recInfos.size();
     CrashIf(recNo >= nRecs);
     if (recNo >= nRecs) {
         return {};
     }
     size_t off = recInfos[recNo].offset;
-    size_t nextOff = data.size;
+    size_t nextOff = dataSize;
     if (recNo != nRecs - 1) {
         nextOff = recInfos[recNo + 1].offset;
     }
     CrashIf(off > nextOff);
     size_t size = nextOff - off;
-    return {data.data + off, size};
+    return {(u8*)data + off, size};
 }
 
-PdbReader* PdbReader::CreateFromData(OwnedData data) {
-    if (!data.data) {
+PdbReader* PdbReader::CreateFromData(std::span<u8> d) {
+    if (d.empty()) {
         return nullptr;
     }
     PdbReader* reader = new PdbReader();
-    if (!reader->Parse(std::move(data))) {
+    if (!reader->Parse(d)) {
         delete reader;
         return nullptr;
     }
     return reader;
 }
 
-PdbReader* PdbReader::CreateFromFile(const char* filePath) {
-    OwnedData data = file::ReadFile(filePath);
-    return CreateFromData(std::move(data));
+PdbReader* PdbReader::CreateFromFile(const char* path) {
+    auto d = file::ReadFile(path);
+    std::span<u8> ds = {(u8*)d.data(), d.size()};
+    return CreateFromData(ds);
 }
 
 #if OS_WIN
 #include "WinUtil.h"
 
 PdbReader* PdbReader::CreateFromFile(const WCHAR* filePath) {
-    OwnedData data = file::ReadFile(filePath);
-    return CreateFromData(std::move(data));
+    std::span<u8> d = file::ReadFile(filePath);
+    return CreateFromData(d);
 }
 
 PdbReader* PdbReader::CreateFromStream(IStream* stream) {
-    OwnedData data = GetDataFromStream(stream);
-    return CreateFromData(std::move(data));
+    std::span<u8> d = GetDataFromStream(stream, nullptr);
+    return CreateFromData(d);
 }
 #endif
+
+PdbDocType GetPdbDocType(const char* typeCreator) {
+    if (memeq(typeCreator, MOBI_TYPE_CREATOR, 8)) {
+        return PdbDocType::Mobipocket;
+    }
+    if (memeq(typeCreator, PALMDOC_TYPE_CREATOR, 8)) {
+        return PdbDocType::PalmDoc;
+    }
+    if (memeq(typeCreator, TEALDOC_TYPE_CREATOR, 8)) {
+        return PdbDocType::TealDoc;
+    }
+    if (memeq(typeCreator, PLUCKER_TYPE_CREATOR, 8)) {
+        return PdbDocType::Plucker;
+    }
+    return PdbDocType::Unknown;
+}
